@@ -75,6 +75,11 @@ pub enum LedAdapterError {
 ///
 /// Attempting to use more LEDs that the buffer is configured for will result in
 /// an `LedAdapterError:BufferSizeExceeded` error.
+/// # Example
+/// If we want to drive 5 Neopixel RGBs on channel 0 we would do this:
+/// ```rs
+/// let mut led = <smartLedAdapter!(0, 5)>::new(rmt.channel0, io.pins.gpio33);
+/// ```
 #[macro_export]
 macro_rules! smartLedAdapter {
     ( $channel: literal, $buffer_size: literal ) => {
