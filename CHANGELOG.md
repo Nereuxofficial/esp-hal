@@ -7,7 +7,27 @@ Please note that only changes to the `esp-hal-common` package are tracked in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-[Unreleased]
+## [Unreleased]
+
+### Added
+
+### Changed
+
+### Fixed
+
+- ESP32-C2/C3 examples: fix build error (#899)
+- ESP32-S3: Fix GPIO interrupt handler crashing when using GPIO48. (#898)
+
+### Removed
+
+## [0.13.1] - 2023-11-02
+
+### Fixed
+
+- ESP32-C3: Make sure BLE and WiFi are not powered down when esp-wifi needs them (#891)
+- ESP32-C6/H2: Fix setting UART baud rate (#893)
+
+## [0.13.0] - 2023-10-31
 
 ### Added
 
@@ -19,8 +39,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add UART support for splitting into TX and RX (#754)
 - Async support for I2S (#801)
 - Async support for PARL_IO (#807)
-- Implement `embeded_hal_async::delay::DelayUs` trait for `SYSTIMER` alarms (#812)
-  - This trait is NOT implemented when the `embassy-time-systick` feature is enabled!
 - ETM driver, GPIO ETM (#819)
 - (G)DMA AES support (#821)
 - SYSTIMER ETM functionality (#828)
@@ -37,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Bumped MSRV to 1.67 (#798)
 - Optimised multi-core critical section implementation (#797)
+- Changed linear- and curve-calibrated ADC to provide readings in mV (#836)
 
 ### Fixed
 
@@ -75,7 +94,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The SPI traits are no longer re-exported in the main prelude, but from preludes in `spi::master`/`spi::slave` instead (#860)
 - The `embedded-hal-1` and `embedded-hal-async` traits are no longer re-exported in the prelude (#860)
 
-## [0.12.0]
+## [0.12.0] - 2023-09-05
 
 ### Added
 
@@ -274,7 +293,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2022-08-05
 
-[Unreleased]: https://github.com/esp-rs/esp-hal/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/esp-rs/esp-hal/compare/v0.13.1...HEAD
+[0.13.1]: https://github.com/esp-rs/esp-hal/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/esp-rs/esp-hal/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/esp-rs/esp-hal/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/esp-rs/esp-hal/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/esp-rs/esp-hal/compare/v0.9.0...v0.10.0
