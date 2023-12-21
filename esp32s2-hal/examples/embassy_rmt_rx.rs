@@ -10,6 +10,7 @@ use embassy_time::{Duration, Timer};
 use esp32s2_hal::{
     clock::ClockControl,
     embassy::{self},
+    gpio::{Gpio15, Output, PushPull},
     peripherals::Peripherals,
     prelude::*,
     rmt::{asynch::RxChannelAsync, PulseCode, RxChannelConfig, RxChannelCreator},
@@ -17,9 +18,7 @@ use esp32s2_hal::{
     IO,
 };
 use esp_backtrace as _;
-use esp_hal_common::gpio::{Gpio15, Output, PushPull};
 use esp_println::{print, println};
-use xtensa_atomic_emulation_trap as _;
 
 const WIDTH: usize = 80;
 
@@ -38,7 +37,7 @@ async fn signal_task(mut pin: Gpio15<Output<PushPull>>) {
 }
 
 #[main]
-async fn main(spawner: Spawner) -> ! {
+async fn main(spawner: Spawner) {
     #[cfg(feature = "log")]
     esp_println::logger::init_logger_from_env();
     println!("Init!");
@@ -73,13 +72,6 @@ async fn main(spawner: Spawner) -> ! {
             },
         )
         .unwrap();
-
-    // you have to enable the interrupt for async to work
-    esp32s2_hal::interrupt::enable(
-        esp32s2_hal::peripherals::Interrupt::RMT,
-        esp32s2_hal::interrupt::Priority::Priority1,
-    )
-    .unwrap();
 
     spawner
         .spawn(signal_task(io.pins.gpio15.into_push_pull_output()))

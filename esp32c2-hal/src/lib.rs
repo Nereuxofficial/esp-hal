@@ -11,7 +11,6 @@
 //!   provided by [embedded-hal-async] and [embedded-io-async]
 //! - `debug` - Enable debug features in the HAL (used for development)
 //! - `defmt` - Enable [`defmt::Format`] on certain types
-//! - `direct-boot` - Use the direct boot image format
 //! - `direct-vectoring` - Enable direct vector table hooking support
 //! - `eh1` - Implement the traits defined in the `1.0.0-xxx` pre-releases of
 //!   [embedded-hal], [embedded-hal-nb], and [embedded-io]
@@ -19,9 +18,17 @@
 //!   framework. One of `embassy-time-*` features must also be enabled when
 //!   using this feature.
 //! - `embassy-time-systick` - Enable the [embassy] time driver using the
-//!   `SYSTIMER` peripheral
+//!   `SYSTIMER` peripheral. The `SYSTIMER` peripheral has three alarms
+//!   available for use
 //! - `embassy-time-timg0` - Enable the [embassy] time driver using the `TIMG0`
-//!   peripheral
+//!   peripheral. The `TIMG0` peripheral has a single alarm available for use
+//! - `embassy-integrated-timers` - Uses hardware timers as alarms for the
+//!   executors. Using this feature limits the number of executors to the number
+//!   of hardware alarms provided by the time driver
+//! - `embassy-generic-queue-N` (where `N` can be `8`, `16`, `32`, `64` or
+//!   `128`) - Use a generic timer queue of size `N` for the executors' timer
+//!   queues. Using this feature can expand the number of executors you can use
+//!   to `N`
 //! - `interrupt-preemption` - Enable priority-based interrupt preemption
 //! - `log` - enable log output using the `log` crate
 //! - `rt` - Runtime support
@@ -33,7 +40,8 @@
 //!
 //! #### Default Features
 //!
-//! The `rt`, `vectored`, and `xtal-40mhz` features are enabled by default.
+//! The `rt`, `vectored`, `xtal-40mhz` and `embassy-integrated-timers` features
+//! are enabled by default.
 //!
 //! [embedded-hal-async]: https://github.com/rust-embedded/embedded-hal/tree/master/embedded-hal-async
 //! [embedded-io-async]: https://github.com/rust-embedded/embedded-hal/tree/master/embedded-io-async
@@ -43,33 +51,6 @@
 //! [embassy]: https://github.com/embassy-rs/embassy
 //! [`ufmt_write::uWrite`]: https://docs.rs/ufmt-write/latest/ufmt_write/trait.uWrite.html
 //! [`defmt::Format`]: https://docs.rs/defmt/0.3.5/defmt/trait.Format.html
-//!
-//! ### Supported Image Formats
-//!
-//! This HAL supports building multiple different application image formats. You
-//! can read about each below.
-//!
-//! The ESP-IDF Bootloader format is used unless some other format is specified
-//! via its feature.
-//!
-//! #### ESP-IDF Bootloader
-//!
-//! Use the second-stage bootloader from [ESP-IDF] and its associated
-//! application image format. See the [App Image Format] documentation for more
-//! information about this format.
-//!
-//! [ESP-IDF]: https://github.com/espressif/esp-idf
-//! [App Image Format]: https://docs.espressif.com/projects/esp-idf/en/latest/esp32/api-reference/system/app_image_format.html
-//!
-//! #### Direct Boot
-//!
-//! This device additionally supports direct-boot, which allows an application
-//! to be executed directly from flash, without using the second-stage
-//! bootloader. For more information please see the
-//! [esp32c3-direct-boot-example] in the Espressif organization on GitHub.
-//!
-//! [esp32c3-direct-boot-example]: https://github.com/espressif/esp32c3-direct-boot-example
-
 #![no_std]
 #![doc(html_logo_url = "https://avatars.githubusercontent.com/u/46717278")]
 

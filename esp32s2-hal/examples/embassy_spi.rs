@@ -23,6 +23,7 @@ use embassy_time::{Duration, Timer};
 use esp32s2_hal::{
     clock::ClockControl,
     dma::DmaPriority,
+    dma_descriptors,
     embassy::{self},
     pdma::*,
     peripherals::Peripherals,
@@ -36,7 +37,7 @@ use esp32s2_hal::{
 use esp_backtrace as _;
 
 #[main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) {
     esp_println::println!("Init!");
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
@@ -54,12 +55,6 @@ async fn main(_spawner: Spawner) -> ! {
         embassy::init(&clocks, timer_group0.timer0);
     }
 
-    esp32s2_hal::interrupt::enable(
-        esp32s2_hal::peripherals::Interrupt::SPI2_DMA,
-        esp32s2_hal::interrupt::Priority::Priority1,
-    )
-    .unwrap();
-
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
     let sclk = io.pins.gpio36;
     let miso = io.pins.gpio37;
@@ -69,25 +64,16 @@ async fn main(_spawner: Spawner) -> ! {
     let dma = Dma::new(system.dma);
     let dma_channel = dma.spi2channel;
 
-    let mut descriptors = [0u32; 8 * 3];
-    let mut rx_descriptors = [0u32; 8 * 3];
+    let (mut descriptors, mut rx_descriptors) = dma_descriptors!(32000);
 
-    let mut spi = Spi::new(
-        peripherals.SPI2,
-        sclk,
-        mosi,
-        miso,
-        cs,
-        100u32.kHz(),
-        SpiMode::Mode0,
-        &clocks,
-    )
-    .with_dma(dma_channel.configure(
-        false,
-        &mut descriptors,
-        &mut rx_descriptors,
-        DmaPriority::Priority0,
-    ));
+    let mut spi = Spi::new(peripherals.SPI2, 100u32.kHz(), SpiMode::Mode0, &clocks)
+        .with_pins(Some(sclk), Some(mosi), Some(miso), Some(cs))
+        .with_dma(dma_channel.configure(
+            false,
+            &mut descriptors,
+            &mut rx_descriptors,
+            DmaPriority::Priority0,
+        ));
 
     let send_buffer = [0, 1, 2, 3, 4, 5, 6, 7];
     loop {

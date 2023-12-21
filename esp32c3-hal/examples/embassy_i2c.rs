@@ -20,8 +20,7 @@ use esp32c3_hal::{
     clock::ClockControl,
     embassy,
     i2c::I2C,
-    interrupt,
-    peripherals::{Interrupt, Peripherals},
+    peripherals::Peripherals,
     prelude::*,
     IO,
 };
@@ -29,7 +28,7 @@ use esp_backtrace as _;
 use lis3dh_async::{Lis3dh, Range, SlaveAddr};
 
 #[main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) {
     let peripherals = Peripherals::take();
     let system = peripherals.SYSTEM.split();
     let clocks = ClockControl::boot_defaults(system.clock_control).freeze();
@@ -55,8 +54,6 @@ async fn main(_spawner: Spawner) -> ! {
         400u32.kHz(),
         &clocks,
     );
-
-    interrupt::enable(Interrupt::I2C_EXT0, interrupt::Priority::Priority1).unwrap();
 
     let mut lis3dh = Lis3dh::new_i2c(i2c0, SlaveAddr::Alternate).await.unwrap();
     lis3dh.set_range(Range::G8).await.unwrap();

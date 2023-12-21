@@ -18,10 +18,9 @@ use esp32s2_hal::{
 };
 use esp_backtrace as _;
 use esp_println::println;
-use xtensa_atomic_emulation_trap as _;
 
 #[main]
-async fn main(_spawner: Spawner) -> ! {
+async fn main(_spawner: Spawner) {
     #[cfg(feature = "log")]
     esp_println::logger::init_logger_from_env();
     println!("Init!");
@@ -55,13 +54,6 @@ async fn main(_spawner: Spawner) -> ! {
             },
         )
         .unwrap();
-
-    // you have to enable the interrupt for async to work
-    esp32s2_hal::interrupt::enable(
-        esp32s2_hal::peripherals::Interrupt::RMT,
-        esp32s2_hal::interrupt::Priority::Priority1,
-    )
-    .unwrap();
 
     let mut data = [PulseCode {
         level1: true,

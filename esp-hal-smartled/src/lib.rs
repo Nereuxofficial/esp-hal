@@ -14,7 +14,8 @@
 //! let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 //! let rmt = Rmt::new(peripherals.RMT, 80u32.MHz(), &clocks).unwrap();
 //!
-//! let led = <smartLedAdapter!(0, 1)>::new(rmt.channel0, io.pins.gpio0);
+//! let rmt_buffer = smartLedBuffer!(1);
+//! let mut led = SmartLedsAdapter::new(rmt.channel0, io.pins.gpio2, rmt_buffer);
 //! ```
 
 #![no_std]
@@ -70,8 +71,8 @@ pub enum LedAdapterError {
     TransmissionError(RmtError),
 }
 
-/// Macro to generate adapters with an arbitrary buffer size fitting for a
-/// specific number of `$buffer_size` LEDs to be addressed.
+/// Macro to allocate a buffer sized for a specific number of LEDs to be
+/// addressed.
 ///
 /// Attempting to use more LEDs that the buffer is configured for will result in
 /// an `LedAdapterError:BufferSizeExceeded` error.
@@ -81,15 +82,15 @@ pub enum LedAdapterError {
 /// let mut led = <smartLedAdapter!(0, 5)>::new(rmt.channel0, io.pins.gpio33);
 /// ```
 #[macro_export]
-macro_rules! smartLedAdapter {
-    ( $channel: literal, $buffer_size: literal ) => {
+macro_rules! smartLedBuffer {
+    ( $buffer_size: literal ) => {
         // The size we're assigning here is calculated as following
         //  (
         //   Nr. of LEDs
         //   * channels (r,g,b -> 3)
         //   * pulses per channel 8)
         //  ) + 1 additional pulse for the end delimiter
-        SmartLedsAdapter::<_, $channel, { $buffer_size * 24 + 1 }>
+        [0u32; $buffer_size * 24 + 1]
     };
 }
 
@@ -111,6 +112,7 @@ where
     pub fn new<C, O>(
         channel: C,
         pin: impl Peripheral<P = O> + 'd,
+        rmt_buffer: [u32; BUFFER_SIZE],
     ) -> SmartLedsAdapter<TX, CHANNEL, BUFFER_SIZE>
     where
         O: OutputPin + 'd,
@@ -129,7 +131,7 @@ where
 
         Self {
             channel: Some(channel),
-            rmt_buffer: [0; BUFFER_SIZE],
+            rmt_buffer,
         }
     }
 

@@ -49,6 +49,8 @@ pub fn init_psram(_peripheral: impl crate::peripheral::Peripheral<P = crate::per
 
 #[cfg(any(feature = "psram-2m", feature = "psram-4m", feature = "psram-8m"))]
 pub(crate) mod utils {
+    use core::ptr::addr_of_mut;
+
     use procmacros::ram;
 
     pub(crate) fn s_mapping(v_start: u32, size: u32) {
@@ -58,7 +60,7 @@ pub(crate) mod utils {
         unsafe {
             let dport = &*esp32::DPORT::PTR;
             dport
-                .app_cache_ctrl1
+                .app_cache_ctrl1()
                 .modify(|_, w| w.app_cache_mask_dram1().clear_bit());
         }
 
@@ -323,7 +325,7 @@ pub(crate) mod utils {
 
         fn esp_rom_spiflash_config_clk(freqdiv: u8, spi: u8) -> i32;
 
-        static g_rom_spiflash_dummy_len_plus: u8;
+        static mut g_rom_spiflash_dummy_len_plus: u8;
 
         static g_rom_flashchip: EspRomSpiflashChip;
 
@@ -622,49 +624,49 @@ pub(crate) mod utils {
             let dport = &*esp32::DPORT::PTR;
 
             dport
-                .pro_cache_ctrl
+                .pro_cache_ctrl()
                 .modify(|_, w| w.pro_dram_hl().clear_bit().pro_dram_split().clear_bit());
             dport
-                .app_cache_ctrl
+                .app_cache_ctrl()
                 .modify(|_, w| w.app_dram_hl().clear_bit().app_dram_split().clear_bit());
             if vaddrmode == PsramVaddrMode::PsramVaddrModeLowhigh {
                 dport
-                    .pro_cache_ctrl
+                    .pro_cache_ctrl()
                     .modify(|_, w| w.pro_dram_hl().set_bit());
                 dport
-                    .app_cache_ctrl
+                    .app_cache_ctrl()
                     .modify(|_, w| w.app_dram_hl().set_bit());
             } else if vaddrmode == PsramVaddrMode::PsramVaddrModeEvenodd {
                 dport
-                    .pro_cache_ctrl
+                    .pro_cache_ctrl()
                     .modify(|_, w| w.pro_dram_split().set_bit());
                 dport
-                    .app_cache_ctrl
+                    .app_cache_ctrl()
                     .modify(|_, w| w.app_dram_split().set_bit());
             }
 
             // use Dram1 to visit ext sram. cache page mode : 1 -->16k  4 -->2k
             // 0-->32k,(accord with the settings in cache_sram_mmu_set)
-            dport.pro_cache_ctrl1.modify(|_, w| {
+            dport.pro_cache_ctrl1().modify(|_, w| {
                 w.pro_cache_mask_dram1()
                     .clear_bit()
                     .pro_cache_mask_opsdram()
                     .clear_bit()
             });
             dport
-                .pro_cache_ctrl1
+                .pro_cache_ctrl1()
                 .modify(|_, w| w.pro_cmmu_sram_page_mode().variant(0));
 
             // use Dram1 to visit ext sram. cache page mode : 1 -->16k  4 -->2k
             // 0-->32k,(accord with the settings in cache_sram_mmu_set)
-            dport.app_cache_ctrl1.modify(|_, w| {
+            dport.app_cache_ctrl1().modify(|_, w| {
                 w.app_cache_mask_dram1()
                     .clear_bit()
                     .app_cache_mask_opsdram()
                     .clear_bit()
             });
             dport
-                .app_cache_ctrl1
+                .app_cache_ctrl1()
                 .modify(|_, w| w.app_cmmu_sram_page_mode().variant(0));
         }
 
@@ -969,7 +971,9 @@ pub(crate) mod utils {
         unsafe {
             // DPORT_SET_PERI_REG_MASK(DPORT_HOST_INF_SEL_REG, 1 << 14);
             let dport = &*esp32::DPORT::PTR;
-            dport.host_inf_sel.modify(|r, w| w.bits(r.bits() | 1 << 14));
+            dport
+                .host_inf_sel()
+                .modify(|r, w| w.bits(r.bits() | 1 << 14));
         }
 
         // Start send data
@@ -983,7 +987,7 @@ pub(crate) mod utils {
             // DPORT_CLEAR_PERI_REG_MASK(DPORT_HOST_INF_SEL_REG, 1 << 14);
             let dport = &*esp32::DPORT::PTR;
             dport
-                .host_inf_sel
+                .host_inf_sel()
                 .modify(|r, w| w.bits(r.bits() & !(1 << 14)));
         }
 
@@ -1057,8 +1061,8 @@ pub(crate) mod utils {
 
     // psram gpio init , different working frequency we have different solutions
     fn psram_gpio_config(psram_io: &PsramIo, mode: PsramCacheSpeed) -> u32 {
-        let g_rom_spiflash_dummy_len_plus_ptr: *mut u8 =
-            unsafe { core::mem::transmute(&g_rom_spiflash_dummy_len_plus) };
+        let g_rom_spiflash_dummy_len_plus_ptr =
+            unsafe { addr_of_mut!(g_rom_spiflash_dummy_len_plus) };
 
         fn gpio_pin_mux_reg(gpio: u8) -> u32 {
             crate::gpio::get_io_mux_reg(gpio).as_ptr() as u32

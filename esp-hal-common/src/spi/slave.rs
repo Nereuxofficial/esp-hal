@@ -247,8 +247,12 @@ pub mod dma {
             mut self,
         ) -> Result<(RXBUF, TXBUF, SpiDma<'d, T, C>), (DmaError, RXBUF, TXBUF, SpiDma<'d, T, C>)>
         {
+            // Waiting for the DMA transfer is not enough. We need to wait for the
+            // peripheral to finish flushing its buffers, too.
             while !self.is_done() {}
-            self.spi_dma.spi.flush().ok(); // waiting for the DMA transfer is not enough
+            self.spi_dma.spi.flush().ok();
+
+            let err = self.spi_dma.channel.rx.has_error() || self.spi_dma.channel.tx.has_error();
 
             // `DmaTransfer` needs to have a `Drop` implementation, because we accept
             // managed buffers that can free their memory on drop. Because of that
@@ -261,8 +265,6 @@ pub mod dma {
                 let rbuffer = core::ptr::read(&self.rbuffer);
                 let tbuffer = core::ptr::read(&self.tbuffer);
                 let payload = core::ptr::read(&self.spi_dma);
-                let err = (&self).spi_dma.channel.rx.has_error()
-                    || (&self).spi_dma.channel.tx.has_error();
                 mem::forget(self);
                 if err {
                     Err((DmaError::DescriptorError, rbuffer, tbuffer, payload))
@@ -291,8 +293,7 @@ pub mod dma {
         }
     }
 
-    /// An in-progress DMA transfer.
-    pub struct SpiDmaTransfer<'d, T, C, BUFFER>
+    pub struct SpiDmaTransferRx<'d, T, C, BUFFER>
     where
         T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
         C: ChannelTypes,
@@ -302,7 +303,7 @@ pub mod dma {
         buffer: BUFFER,
     }
 
-    impl<'d, T, C, BUFFER> DmaTransfer<BUFFER, SpiDma<'d, T, C>> for SpiDmaTransfer<'d, T, C, BUFFER>
+    impl<'d, T, C, BUFFER> DmaTransfer<BUFFER, SpiDma<'d, T, C>> for SpiDmaTransferRx<'d, T, C, BUFFER>
     where
         T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
         C: ChannelTypes,
@@ -340,11 +341,79 @@ pub mod dma {
         /// Check if the DMA transfer is complete
         fn is_done(&self) -> bool {
             let ch = &self.spi_dma.channel;
-            ch.tx.is_done() && ch.rx.is_done()
+            ch.rx.is_done()
         }
     }
 
-    impl<'d, T, C, BUFFER> Drop for SpiDmaTransfer<'d, T, C, BUFFER>
+    impl<'d, T, C, BUFFER> Drop for SpiDmaTransferRx<'d, T, C, BUFFER>
+    where
+        T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
+        C: ChannelTypes,
+        C::P: SpiPeripheral,
+    {
+        fn drop(&mut self) {
+            while !self.is_done() {}
+            self.spi_dma.spi.flush().ok(); // waiting for the DMA transfer is
+                                           // not enough
+        }
+    }
+
+    /// An in-progress DMA transfer.
+    pub struct SpiDmaTransferTx<'d, T, C, BUFFER>
+    where
+        T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
+        C: ChannelTypes,
+        C::P: SpiPeripheral,
+    {
+        spi_dma: SpiDma<'d, T, C>,
+        buffer: BUFFER,
+    }
+
+    impl<'d, T, C, BUFFER> DmaTransfer<BUFFER, SpiDma<'d, T, C>> for SpiDmaTransferTx<'d, T, C, BUFFER>
+    where
+        T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
+        C: ChannelTypes,
+        C::P: SpiPeripheral,
+    {
+        /// Wait for the DMA transfer to complete and return the buffers and the
+        /// SPI instance.
+        fn wait(
+            mut self,
+        ) -> Result<(BUFFER, SpiDma<'d, T, C>), (DmaError, BUFFER, SpiDma<'d, T, C>)> {
+            // Waiting for the DMA transfer is not enough. We need to wait for the
+            // peripheral to finish flushing its buffers, too.
+            while !self.is_done() {}
+            self.spi_dma.spi.flush().ok();
+
+            let err = self.spi_dma.channel.rx.has_error() || self.spi_dma.channel.tx.has_error();
+
+            // `DmaTransfer` needs to have a `Drop` implementation, because we accept
+            // managed buffers that can free their memory on drop. Because of that
+            // we can't move out of the `DmaTransfer`'s fields, so we use `ptr::read`
+            // and `mem::forget`.
+            //
+            // NOTE(unsafe) There is no panic branch between getting the resources
+            // and forgetting `self`.
+            unsafe {
+                let buffer = core::ptr::read(&self.buffer);
+                let payload = core::ptr::read(&self.spi_dma);
+                mem::forget(self);
+                if err {
+                    Err((DmaError::DescriptorError, buffer, payload))
+                } else {
+                    Ok((buffer, payload))
+                }
+            }
+        }
+
+        /// Check if the DMA transfer is complete
+        fn is_done(&self) -> bool {
+            let ch = &self.spi_dma.channel;
+            ch.tx.is_done()
+        }
+    }
+
+    impl<'d, T, C, BUFFER> Drop for SpiDmaTransferTx<'d, T, C, BUFFER>
     where
         T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
         C: ChannelTypes,
@@ -385,15 +454,15 @@ pub mod dma {
     {
         /// Register a buffer for a DMA write.
         ///
-        /// This will return a [SpiDmaTransfer] owning the buffer(s) and the SPI
-        /// instance. The maximum amount of data to be sent is 32736
+        /// This will return a [SpiDmaTransferTx] owning the buffer(s) and the
+        /// SPI instance. The maximum amount of data to be sent is 32736
         /// bytes.
         ///
         /// The write is driven by the SPI master's sclk signal and cs line.
         pub fn dma_write<TXBUF>(
             mut self,
             words: TXBUF,
-        ) -> Result<SpiDmaTransfer<'d, T, C, TXBUF>, Error>
+        ) -> Result<SpiDmaTransferTx<'d, T, C, TXBUF>, Error>
         where
             TXBUF: ReadBuffer<Word = u8>,
         {
@@ -405,7 +474,7 @@ pub mod dma {
 
             self.spi
                 .start_write_bytes_dma(ptr, len, &mut self.channel.tx)
-                .map(move |_| SpiDmaTransfer {
+                .map(move |_| SpiDmaTransferTx {
                     spi_dma: self,
                     buffer: words,
                 })
@@ -413,15 +482,15 @@ pub mod dma {
 
         /// Register a buffer for a DMA read.
         ///
-        /// This will return a [SpiDmaTransfer] owning the buffer(s) and the SPI
-        /// instance. The maximum amount of data to be received is 32736
-        /// bytes.
+        /// This will return a [SpiDmaTransferRx] owning the buffer(s) and the
+        /// SPI instance. The maximum amount of data to be received is
+        /// 32736 bytes.
         ///
         /// The read is driven by the SPI master's sclk signal and cs line.
         pub fn dma_read<RXBUF>(
             mut self,
             mut words: RXBUF,
-        ) -> Result<SpiDmaTransfer<'d, T, C, RXBUF>, Error>
+        ) -> Result<SpiDmaTransferRx<'d, T, C, RXBUF>, Error>
         where
             RXBUF: WriteBuffer<Word = u8>,
         {
@@ -433,7 +502,7 @@ pub mod dma {
 
             self.spi
                 .start_read_bytes_dma(ptr, len, &mut self.channel.rx)
-                .map(move |_| SpiDmaTransfer {
+                .map(move |_| SpiDmaTransferRx {
                     spi_dma: self,
                     buffer: words,
                 })
@@ -441,9 +510,9 @@ pub mod dma {
 
         /// Register buffers for a DMA transfer.
         ///
-        /// This will return a [SpiDmaTransfer] owning the buffer(s) and the SPI
-        /// instance. The maximum amount of data to be sent/received is
-        /// 32736 bytes.
+        /// This will return a [SpiDmaTransferRxTx] owning the buffer(s) and the
+        /// SPI instance. The maximum amount of data to be sent/received
+        /// is 32736 bytes.
         ///
         /// The data transfer is driven by the SPI master's sclk signal and cs
         /// line.
@@ -524,7 +593,7 @@ where
         // single).
         #[cfg(not(esp32))]
         reg_block
-            .dma_conf
+            .dma_conf()
             .modify(|_, w| w.dma_slv_seg_trans_en().clear_bit());
 
         tx.start_transfer()?;
@@ -554,7 +623,7 @@ where
         // single).
         #[cfg(not(esp32))]
         reg_block
-            .dma_conf
+            .dma_conf()
             .modify(|_, w| w.dma_slv_seg_trans_en().clear_bit());
 
         Ok(tx.start_transfer()?)
@@ -578,7 +647,7 @@ where
         // single).
         #[cfg(not(esp32))]
         reg_block
-            .dma_conf
+            .dma_conf()
             .modify(|_, w| w.dma_slv_seg_trans_en().clear_bit());
 
         Ok(rx.start_transfer()?)
@@ -596,7 +665,7 @@ where
     #[cfg(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3))]
     fn enable_dma(&self) {
         let reg_block = self.register_block();
-        reg_block.dma_conf.modify(|_, w| {
+        reg_block.dma_conf().modify(|_, w| {
             w.dma_tx_ena()
                 .set_bit()
                 .dma_rx_ena()
@@ -614,7 +683,7 @@ where
     #[cfg(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3))]
     fn clear_dma_interrupts(&self) {
         let reg_block = self.register_block();
-        reg_block.dma_int_clr.write(|w| {
+        reg_block.dma_int_clr().write(|w| {
             w.dma_infifo_full_err_int_clr()
                 .set_bit()
                 .dma_outfifo_empty_err_int_clr()
@@ -656,7 +725,7 @@ where
 
 #[cfg(not(any(esp32, esp32s2)))]
 fn reset_dma_before_usr_cmd(reg_block: &RegisterBlock) {
-    reg_block.dma_conf.modify(|_, w| {
+    reg_block.dma_conf().modify(|_, w| {
         w.rx_afifo_rst()
             .set_bit()
             .buf_afifo_rst()
@@ -719,9 +788,9 @@ pub trait Instance {
     /// Initialize for full-duplex 1 bit mode
     fn init(&mut self) {
         let reg_block = self.register_block();
-        reg_block.slave.write(|w| w.mode().set_bit());
+        reg_block.slave().write(|w| w.mode().set_bit());
 
-        reg_block.user.modify(|_, w| {
+        reg_block.user().modify(|_, w| {
             w.usr_miso_highpart()
                 .clear_bit()
                 .doutdin()
@@ -739,7 +808,7 @@ pub trait Instance {
         });
 
         #[cfg(not(any(esp32, esp32s2)))]
-        reg_block.clk_gate.modify(|_, w| {
+        reg_block.clk_gate().modify(|_, w| {
             w.clk_en()
                 .clear_bit()
                 .mst_clk_active()
@@ -749,7 +818,7 @@ pub trait Instance {
         });
 
         #[cfg(not(any(esp32, esp32s2)))]
-        reg_block.ctrl.modify(|_, w| {
+        reg_block.ctrl().modify(|_, w| {
             w.q_pol()
                 .clear_bit()
                 .d_pol()
@@ -760,14 +829,14 @@ pub trait Instance {
 
         #[cfg(esp32s2)]
         reg_block
-            .ctrl
+            .ctrl()
             .modify(|_, w| w.q_pol().clear_bit().d_pol().clear_bit().wp().clear_bit());
 
         #[cfg(esp32)]
-        reg_block.ctrl.modify(|_, w| w.wp().clear_bit());
+        reg_block.ctrl().modify(|_, w| w.wp().clear_bit());
 
         #[cfg(not(esp32))]
-        reg_block.misc.write(|w| unsafe { w.bits(0) });
+        reg_block.misc().write(|w| unsafe { w.bits(0) });
     }
 
     #[cfg(not(esp32))]
@@ -777,39 +846,39 @@ pub trait Instance {
         match data_mode {
             SpiMode::Mode0 => {
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.tsck_i_edge().clear_bit().rsck_i_edge().clear_bit());
                 #[cfg(esp32s2)]
                 reg_block.ctrl1.modify(|_, w| w.clk_mode_13().clear_bit());
                 #[cfg(not(esp32s2))]
-                reg_block.slave.modify(|_, w| w.clk_mode_13().clear_bit());
+                reg_block.slave().modify(|_, w| w.clk_mode_13().clear_bit());
             }
             SpiMode::Mode1 => {
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.tsck_i_edge().set_bit().rsck_i_edge().set_bit());
                 #[cfg(esp32s2)]
-                reg_block.ctrl1.modify(|_, w| w.clk_mode_13().set_bit());
+                reg_block.ctrl1().modify(|_, w| w.clk_mode_13().set_bit());
                 #[cfg(not(esp32s2))]
-                reg_block.slave.modify(|_, w| w.clk_mode_13().set_bit());
+                reg_block.slave().modify(|_, w| w.clk_mode_13().set_bit());
             }
             SpiMode::Mode2 => {
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.tsck_i_edge().set_bit().rsck_i_edge().set_bit());
                 #[cfg(esp32s2)]
-                reg_block.ctrl1.modify(|_, w| w.clk_mode_13().clear_bit());
+                reg_block.ctrl1().modify(|_, w| w.clk_mode_13().clear_bit());
                 #[cfg(not(esp32s2))]
-                reg_block.slave.modify(|_, w| w.clk_mode_13().clear_bit());
+                reg_block.slave().modify(|_, w| w.clk_mode_13().clear_bit());
             }
             SpiMode::Mode3 => {
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.tsck_i_edge().clear_bit().rsck_i_edge().clear_bit());
                 #[cfg(esp32s2)]
-                reg_block.ctrl1.modify(|_, w| w.clk_mode_13().set_bit());
+                reg_block.ctrl1().modify(|_, w| w.clk_mode_13().set_bit());
                 #[cfg(not(esp32s2))]
-                reg_block.slave.modify(|_, w| w.clk_mode_13().set_bit());
+                reg_block.slave().modify(|_, w| w.clk_mode_13().set_bit());
             }
         }
         self
@@ -864,7 +933,7 @@ pub trait Instance {
         #[cfg(not(any(esp32, esp32s2)))]
         {
             reg_block
-                .dma_int_raw
+                .dma_int_raw()
                 .read()
                 .trans_done_int_raw()
                 .bit_is_clear()
@@ -884,11 +953,11 @@ pub trait Instance {
     fn setup_for_flush(&self) {
         #[cfg(any(esp32, esp32s2))]
         self.register_block()
-            .slave
+            .slave()
             .modify(|_, w| w.trans_done().clear_bit());
         #[cfg(not(any(esp32, esp32s2)))]
         self.register_block()
-            .dma_int_clr
+            .dma_int_clr()
             .write(|w| w.trans_done_int_clr().set_bit());
     }
 }

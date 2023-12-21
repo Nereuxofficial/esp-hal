@@ -51,7 +51,7 @@
 //!
 //! ```no_run
 //! #[main]
-//! async fn main(spawner: Spawner) -> ! {
+//! async fn main(spawner: Spawner) {
 //!     // Your application's entry point
 //! }
 //! ```
@@ -81,11 +81,8 @@ use proc_macro_error::proc_macro_error;
 use quote::quote;
 use syn::parse_macro_input;
 
-#[cfg(all(
-    feature = "embassy",
-    any(feature = "esp32", feature = "esp32s2", feature = "esp32s3")
-))]
-mod embassy_xtensa;
+#[cfg(feature = "embassy")]
+mod embassy;
 #[cfg(feature = "enum-dispatch")]
 mod enum_dispatch;
 #[cfg(feature = "interrupt")]
@@ -127,11 +124,11 @@ fn get_hal_crate() -> (
     #[cfg(feature = "esp32s2")]
     let hal_crate = crate_name("esp32s2-hal");
     #[cfg(feature = "esp32s2-ulp")]
-    let hal_crate = crate_name("ulp-riscv-hal");
+    let hal_crate = crate_name("esp-ulp-riscv-hal");
     #[cfg(feature = "esp32s3")]
     let hal_crate = crate_name("esp32s3-hal");
     #[cfg(feature = "esp32s3-ulp")]
-    let hal_crate = crate_name("ulp-riscv-hal");
+    let hal_crate = crate_name("esp-ulp-riscv-hal");
 
     // Crate name:
     #[cfg(feature = "esp32")]
@@ -149,11 +146,11 @@ fn get_hal_crate() -> (
     #[cfg(feature = "esp32s2")]
     let hal_crate_name = Ident::new("esp32s2_hal", Span::call_site().into());
     #[cfg(feature = "esp32s2-ulp")]
-    let hal_crate_name = Ident::new("ulp_riscv_hal", Span::call_site().into());
+    let hal_crate_name = Ident::new("esp_ulp_riscv_hal", Span::call_site().into());
     #[cfg(feature = "esp32s3")]
     let hal_crate_name = Ident::new("esp32s3_hal", Span::call_site().into());
     #[cfg(feature = "esp32s3-ulp")]
-    let hal_crate_name = Ident::new("ulp_riscv_hal", Span::call_site().into());
+    let hal_crate_name = Ident::new("esp_ulp_riscv_hal", Span::call_site().into());
 
     (hal_crate, hal_crate_name)
 }
@@ -681,13 +678,13 @@ pub fn entry(args: TokenStream, input: TokenStream) -> TokenStream {
         crate_name("esp32c6-lp-hal").expect("esp32c6_lp_hal is present in `Cargo.toml`");
     #[cfg(any(feature = "esp32s2-ulp", feature = "esp32s3-ulp"))]
     let found_crate =
-        crate_name("ulp-riscv-hal").expect("ulp-riscv-hal is present in `Cargo.toml`");
+        crate_name("esp-ulp-riscv-hal").expect("esp-ulp-riscv-hal is present in `Cargo.toml`");
 
     let hal_crate = match found_crate {
         #[cfg(feature = "esp32c6-lp")]
         FoundCrate::Itself => quote!(esp32c6_lp_hal),
         #[cfg(any(feature = "esp32s2-ulp", feature = "esp32s3-ulp"))]
-        FoundCrate::Itself => quote!(ulp_riscv_hal),
+        FoundCrate::Itself => quote!(esp_ulp_riscv_hal),
         FoundCrate::Name(name) => {
             let ident = Ident::new(&name, Span::call_site());
             quote!( #ident::Something )
@@ -776,60 +773,15 @@ pub fn entry(args: TokenStream, input: TokenStream) -> TokenStream {
 /// Spawning a task:
 ///
 /// ``` rust
-/// #[embassy_executor::main]
+/// #[main]
 /// async fn main(_s: embassy_executor::Spawner) {
 ///     // Function body
 /// }
 /// ```
-#[cfg(all(
-    feature = "embassy",
-    not(any(feature = "esp32", feature = "esp32s2", feature = "esp32s3"))
-))]
-#[proc_macro_attribute]
-pub fn main(_args: TokenStream, input: TokenStream) -> TokenStream {
-    let f = parse_macro_input!(input as syn::ItemFn);
-
-    let asyncness = f.sig.asyncness;
-    let args = f.sig.inputs;
-    let stmts = f.block.stmts;
-
-    quote!(
-        #[embassy_executor::main(entry = "entry")]
-        #asyncness fn main(#args) {
-             #(#stmts)*
-        }
-    )
-    .into()
-}
-
-/// Creates a new `executor` instance and declares an application entry point
-/// spawning the corresponding function body as an async task.
-///
-/// The following restrictions apply:
-///
-/// * The function must accept exactly 1 parameter, an
-///   `embassy_executor::Spawner` handle that it can use to spawn additional
-///   tasks.
-/// * The function must be declared `async`.
-/// * The function must not use generics.
-/// * Only a single `main` task may be declared.
-///
-/// ## Examples
-/// Spawning a task:
-///
-/// ``` rust
-/// #[embassy_executor::main]
-/// async fn main(_s: embassy_executor::Spawner) {
-///     // Function body
-/// }
-/// ```
-#[cfg(all(
-    feature = "embassy",
-    any(feature = "esp32", feature = "esp32s2", feature = "esp32s3")
-))]
+#[cfg(all(feature = "embassy"))]
 #[proc_macro_attribute]
 pub fn main(args: TokenStream, item: TokenStream) -> TokenStream {
-    use self::embassy_xtensa::{
+    use self::embassy::{
         main::{main, run},
         Args,
     };

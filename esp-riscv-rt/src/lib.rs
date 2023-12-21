@@ -305,26 +305,31 @@ _abs_start:
     r#"
     la a0, _bss_start
     la a1, _bss_end
+    bge a0, a1, 2f
     mv a3, x0
     1:
     sw a3, 0(a0)
     addi a0, a0, 4
     blt a0, a1, 1b
+    2:
 "#,
 #[cfg(feature = "zero-rtc-fast-bss")]
     r#"
     la a0, _rtc_fast_bss_start
     la a1, _rtc_fast_bss_end
+    bge a0, a1, 2f
     mv a3, x0
     1:
     sw a3, 0(a0)
     addi a0, a0, 4
     blt a0, a1, 1b
+    2:
 "#,
 #[cfg(feature = "init-data")]
     r#"
     la a0, _data_start
     la a1, _data_end
+    bge a0, a1, 2f
     la a2, _sidata
     1:
     lw a3, 0(a2)
@@ -332,11 +337,13 @@ _abs_start:
     addi a0, a0, 4
     addi a2, a2, 4
     blt a0, a1, 1b
+    2:
 "#,
 #[cfg(feature = "init-rw-text")]
     r#"
     la a0, _srwtext
     la a1, _erwtext
+    bge a0, a1, 2f
     la a2, _irwtext
     1:
     lw a3, 0(a2)
@@ -344,11 +351,13 @@ _abs_start:
     addi a0, a0, 4
     addi a2, a2, 4
     blt a0, a1, 1b
+    2:
 "#,
 #[cfg(feature = "init-rtc-fast-data")]
     r#"
     la a0, _rtc_fast_data_start
     la a1, _rtc_fast_data_end
+    bge a0, a1, 2f
     la a2, _irtc_fast_data
     1:
     lw a3, 0(a2)
@@ -356,11 +365,13 @@ _abs_start:
     addi a0, a0, 4
     addi a2, a2, 4
     blt a0, a1, 1b
+    2:
 "#,
 #[cfg(feature = "init-rtc-fast-text")]
     r#"
     la a0, _srtc_fast_text
     la a1, _ertc_fast_text
+    bge a0, a1, 2f
     la a2, _irtc_fast_text
     1:
     lw a3, 0(a2)
@@ -368,6 +379,7 @@ _abs_start:
     addi a0, a0, 4
     addi a2, a2, 4
     blt a0, a1, 1b
+    2:
 "#,
     r#"
     li  x1, 0
@@ -415,8 +427,9 @@ _abs_start:
 
     // Allocate stack
     la sp, _stack_start
-    lui t0, 16
+    li t0, 4 // make sure stack start is in RAM
     sub sp, sp, t0
+    andi sp, sp, -16 // Force 16-byte alignment
 
     // Set frame pointer
     add s0, sp, zero
@@ -659,7 +672,35 @@ _start_trap31:
 
 "#,
 r#"
-_start_trap: 
+_start_trap:
+"#,
+#[cfg(feature="fix-sp")]
+r#"
+    // move SP to some save place if it's pointing below the RAM
+    // otherwise we won't be able to do anything reasonable
+    // (since we don't have a working stack)
+    //
+    // most probably we will just print something and halt in this case
+    // we actually can't do anything else
+    csrw mscratch, t0
+    la t0, _stack_end
+    bge sp, t0, 1f
+
+    // use the reserved exception cause 14 to signal we detected a stack overflow
+    li t0, 14
+    csrw mcause, t0
+
+    // set SP to the start of the stack
+    la sp, _stack_start
+    li t0, 4 // make sure stack start is in RAM
+    sub sp, sp, t0
+    andi sp, sp, -16 // Force 16-byte alignment
+
+    1:
+    csrr t0, mscratch
+    // now SP is in RAM - continue
+"#,
+r#"
     addi sp, sp, -40*4
     sw ra, 0*4(sp)"#,
 #[cfg(feature="direct-vectoring")] //for the directly vectored handlers the above is stacked beforehand

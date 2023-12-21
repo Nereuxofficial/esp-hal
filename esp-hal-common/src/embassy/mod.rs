@@ -82,6 +82,9 @@ use core::cell::Cell;
 
 use embassy_time::driver::{AlarmHandle, Driver};
 
+#[cfg(feature = "async")]
+use crate::{interrupt::Priority, peripherals::Interrupt};
+
 #[cfg_attr(
     all(systimer, feature = "embassy-time-systick"),
     path = "time_driver_systimer.rs"
@@ -96,12 +99,77 @@ use time_driver::EmbassyTimer;
 
 use crate::clock::Clocks;
 
+/// Initialise embassy, including setting up interrupts for the DMA and async
+/// enabled peripherals.
 pub fn init(clocks: &Clocks, td: time_driver::TimerType) {
+    // only enable interrupts if the async feature is present
+    #[cfg(feature = "async")]
+    {
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_IN_CH0, Priority::max()).unwrap();
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_OUT_CH0, Priority::max()).unwrap();
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_IN_CH1, Priority::max()).unwrap();
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_OUT_CH1, Priority::max()).unwrap();
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_IN_CH2, Priority::max()).unwrap();
+        #[cfg(any(esp32s3, esp32c6, esp32h2))]
+        crate::interrupt::enable(Interrupt::DMA_OUT_CH2, Priority::max()).unwrap();
+
+        #[cfg(esp32s3)]
+        crate::interrupt::enable(Interrupt::DMA_IN_CH3, Priority::max()).unwrap();
+        #[cfg(esp32s3)]
+        crate::interrupt::enable(Interrupt::DMA_OUT_CH3, Priority::max()).unwrap();
+
+        #[cfg(any(esp32c3, esp32c2))]
+        crate::interrupt::enable(Interrupt::DMA_CH0, Priority::max()).unwrap();
+        #[cfg(esp32c3)]
+        crate::interrupt::enable(Interrupt::DMA_CH1, Priority::max()).unwrap();
+        #[cfg(esp32c3)]
+        crate::interrupt::enable(Interrupt::DMA_CH2, Priority::max()).unwrap();
+
+        #[cfg(any(esp32))]
+        crate::interrupt::enable(Interrupt::SPI1_DMA, Priority::max()).unwrap();
+        #[cfg(any(esp32, esp32s2))]
+        crate::interrupt::enable(Interrupt::SPI2_DMA, Priority::max()).unwrap();
+        #[cfg(any(esp32, esp32s2))]
+        crate::interrupt::enable(Interrupt::SPI3_DMA, Priority::max()).unwrap();
+        #[cfg(esp32s2)]
+        crate::interrupt::enable(Interrupt::SPI4_DMA, Priority::max()).unwrap();
+
+        #[cfg(i2s0)]
+        crate::interrupt::enable(Interrupt::I2S0, Priority::min()).unwrap();
+        #[cfg(i2s1)]
+        crate::interrupt::enable(Interrupt::I2S1, Priority::min()).unwrap();
+
+        #[cfg(rmt)]
+        crate::interrupt::enable(Interrupt::RMT, Priority::min()).unwrap();
+
+        #[cfg(usb_device)]
+        crate::interrupt::enable(Interrupt::USB_DEVICE, Priority::min()).unwrap();
+
+        #[cfg(all(parl_io, not(esp32h2)))]
+        crate::interrupt::enable(Interrupt::PARL_IO, Priority::min()).unwrap();
+        #[cfg(all(parl_io, esp32h2))]
+        crate::interrupt::enable(Interrupt::PARL_IO_RX, Priority::min()).unwrap();
+        #[cfg(all(parl_io, esp32h2))]
+        crate::interrupt::enable(Interrupt::PARL_IO_TX, Priority::min()).unwrap();
+
+        #[cfg(uart0)]
+        crate::interrupt::enable(Interrupt::UART0, Priority::min()).unwrap();
+        #[cfg(uart1)]
+        crate::interrupt::enable(Interrupt::UART1, Priority::min()).unwrap();
+
+        crate::interrupt::enable(Interrupt::I2C_EXT0, Priority::min()).unwrap();
+        crate::interrupt::enable(Interrupt::GPIO, Priority::min()).unwrap();
+    }
+
     EmbassyTimer::init(clocks, td)
 }
 
 pub struct AlarmState {
-    pub timestamp: Cell<u64>,
     pub callback: Cell<Option<(fn(*mut ()), *mut ())>>,
     pub allocated: Cell<bool>,
 }
@@ -111,7 +179,6 @@ unsafe impl Send for AlarmState {}
 impl AlarmState {
     pub const fn new() -> Self {
         Self {
-            timestamp: Cell::new(0),
             callback: Cell::new(None),
             allocated: Cell::new(false),
         }
@@ -124,18 +191,17 @@ impl Driver for EmbassyTimer {
     }
 
     unsafe fn allocate_alarm(&self) -> Option<AlarmHandle> {
-        return critical_section::with(|cs| {
-            let alarms = self.alarms.borrow(cs);
-            for i in 0..time_driver::ALARM_COUNT {
-                let c = alarms.get_unchecked(i);
-                if !c.allocated.get() {
+        critical_section::with(|cs| {
+            for (i, alarm) in self.alarms.borrow(cs).iter().enumerate() {
+                if !alarm.allocated.get() {
                     // set alarm so it is not overwritten
-                    c.allocated.set(true);
-                    return Option::Some(AlarmHandle::new(i as u8));
+                    alarm.allocated.set(true);
+                    self.on_alarm_allocated(i);
+                    return Some(AlarmHandle::new(i as u8));
                 }
             }
-            return Option::None;
-        });
+            None
+        })
     }
 
     fn set_alarm_callback(

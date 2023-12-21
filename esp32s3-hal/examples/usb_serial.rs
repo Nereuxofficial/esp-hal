@@ -25,21 +25,13 @@ fn main() -> ! {
 
     let io = IO::new(peripherals.GPIO, peripherals.IO_MUX);
 
-    let usb = USB::new(
-        peripherals.USB0,
-        io.pins.gpio18,
-        io.pins.gpio19,
-        io.pins.gpio20,
-    );
+    let usb = USB::new(peripherals.USB0, io.pins.gpio19, io.pins.gpio20);
 
     let usb_bus = UsbBus::new(usb, unsafe { &mut EP_MEMORY });
 
     let mut serial = usbd_serial::SerialPort::new(&usb_bus);
 
     let mut usb_dev = UsbDeviceBuilder::new(&usb_bus, UsbVidPid(0x16c0, 0x27dd))
-        .manufacturer("esp-hal")
-        .product("esp-hal")
-        .serial_number("12345678")
         .device_class(usbd_serial::USB_CLASS_CDC)
         .build();
 

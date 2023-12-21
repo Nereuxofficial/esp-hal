@@ -40,7 +40,7 @@ pub struct Efuse;
 
 impl Efuse {
     /// Reads chip's MAC address from the eFuse storage.
-    pub fn get_mac_address() -> [u8; 6] {
+    pub fn read_base_mac_address() -> [u8; 6] {
         Self::read_field_be(MAC_FACTORY)
     }
 
@@ -164,10 +164,10 @@ impl EfuseBlock {
         use EfuseBlock::*;
         let efuse = unsafe { &*EFUSE::ptr() };
         match self {
-            Block0 => efuse.rd_wr_dis.as_ptr(),
-            Block1 => efuse.rd_blk1_data0.as_ptr(),
-            Block2 => efuse.rd_blk2_data0.as_ptr(),
-            Block3 => efuse.rd_blk3_data0.as_ptr(),
+            Block0 => efuse.rd_wr_dis().as_ptr(),
+            Block1 => efuse.rd_blk1_data0().as_ptr(),
+            Block2 => efuse.rd_blk2_data0().as_ptr(),
+            Block3 => efuse.rd_blk3_data0().as_ptr(),
         }
     }
 }

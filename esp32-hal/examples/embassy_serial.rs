@@ -12,13 +12,12 @@ use embassy_sync::{blocking_mutex::raw::NoopRawMutex, signal::Signal};
 use esp32_hal::{
     clock::ClockControl,
     embassy,
-    interrupt,
-    peripherals::{Interrupt, Peripherals, UART0},
+    peripherals::{Peripherals, UART0},
     prelude::*,
+    uart::{config::AtCmdConfig, UartRx, UartTx},
     Uart,
 };
 use esp_backtrace as _;
-use esp_hal_common::uart::{config::AtCmdConfig, UartRx, UartTx};
 use static_cell::make_static;
 
 // rx_fifo_full_threshold
@@ -89,8 +88,6 @@ async fn main(spawner: Spawner) {
         .set_rx_fifo_full_threshold(READ_BUF_SIZE as u16)
         .unwrap();
     let (tx, rx) = uart0.split();
-
-    interrupt::enable(Interrupt::UART0, interrupt::Priority::Priority1).unwrap();
 
     let signal = &*make_static!(Signal::new());
 

@@ -1,19 +1,25 @@
 //! # Advanced Encryption Standard (AES) support.
 //!
 //! ## Overview
+//!
 //! The AES module provides an interface to interact with the AES peripheral,
 //! provides encryption and decryption capabilities for ESP chips using the AES
 //! algorithm. We currently support the following AES encryption modes:
+//!
 //! * AES-128
 //! * AES-192
 //! * AES-256
 //!
 //! ## Example
+//!
 //! ### Initialization
+//!
 //! ```no_run
 //! let mut aes = Aes::new(peripherals.AES);
 //! ```
+//!
 //! ### Creating key and block Buffer
+//!
 //! ```no_run
 //! let keytext = "SUp4SeCp@sSw0rd".as_bytes();
 //! let plaintext = "message".as_bytes();
@@ -28,6 +34,7 @@
 //! ```
 //!
 //! ### Encrypting and Decrypting (using hardware)
+//!
 //! ```no_run
 //! let mut block = block_buf.clone();
 //! aes.process(&mut block, Mode::Encryption128, &keybuf);
@@ -38,6 +45,7 @@
 //! ```
 //!
 //! ### Encrypting and Decrypting (using software)
+//!
 //! ```no_run
 //! let key = GenericArray::from(keybuf);
 //!
@@ -52,13 +60,19 @@
 //! ```
 //!
 //! ### Implementation State
+//!
 //! * DMA mode is currently not supported on ESP32 and ESP32S2 ⚠️
+//!
 //! ## DMA-AES Mode
+//!
 //! Supports 6 block cipher modes including `ECB/CBC/OFB/CTR/CFB8/CFB128`.
+//!
 //! * Initialization vector (IV) is currently not supported ⚠️
 //!
 //! ## Example
-//! ### Initializaton
+//!
+//! ### Initialization
+//!
 //! ```no_run
 //! let dma = Gdma::new(peripherals.DMA);
 //! let dma_channel = dma.channel0;
@@ -75,6 +89,7 @@
 //! ```
 //!
 //! ### Operation
+//!
 //! ```no_run
 //! let transfer = aes
 //!     .process(
@@ -89,7 +104,7 @@
 //! ```
 
 #[cfg(esp32)]
-use crate::peripherals::generic::{Readable, Reg, RegisterSpec, Resettable, Writable};
+use crate::peripherals::generic::{Readable, Reg, RegisterSpec};
 #[cfg(not(esp32))]
 use crate::reg_access::AlignmentHelper;
 use crate::{
@@ -167,15 +182,12 @@ impl<'d> Aes<'d> {
     // TODO: for some reason, the `volatile read/write` helpers from `reg_access`
     // don't work for ESP32
     #[cfg(esp32)]
-    fn write_to_regset<T>(input: &[u8], n_offset: usize, reg_0: &mut Reg<T>)
-    where
-        T: RegisterSpec<Ux = u32> + Resettable + Writable,
-    {
+    fn write_to_regset(input: &[u8], n_offset: usize, reg_0: *mut u32) {
         let chunks = input.chunks_exact(ALIGN_SIZE);
         for (offset, chunk) in (0..n_offset).zip(chunks) {
             let to_write = u32::from_ne_bytes(chunk.try_into().unwrap());
             unsafe {
-                let p = reg_0.as_ptr().add(offset);
+                let p = reg_0.add(offset);
                 p.write_volatile(to_write);
             }
         }
@@ -312,13 +324,17 @@ pub mod dma {
             self,
         ) -> Result<(RXBUF, TXBUF, AesDma<'d, C>), (DmaError, RXBUF, TXBUF, AesDma<'d, C>)>
         {
-            while self.aes_dma.aes.aes.state.read().state().bits() != 2 // DMA status DONE == 2
+            // Waiting for the DMA transfer is not enough. We need to wait for the
+            // peripheral to finish flushing its buffers, too.
+            while self.aes_dma.aes.aes.state().read().state().bits() != 2 // DMA status DONE == 2
                 && !self.aes_dma.channel.tx.is_done()
             {
                 // wait until done
             }
 
             self.aes_dma.finish_transform();
+
+            let err = self.aes_dma.channel.rx.has_error() || self.aes_dma.channel.tx.has_error();
 
             // `DmaTransferRxTx` needs to have a `Drop` implementation, because we accept
             // managed buffers that can free their memory on drop. Because of that
@@ -331,8 +347,6 @@ pub mod dma {
                 let rbuffer = core::ptr::read(&self.rbuffer);
                 let tbuffer = core::ptr::read(&self.tbuffer);
                 let payload = core::ptr::read(&self.aes_dma);
-                let err = (&self).aes_dma.channel.rx.has_error()
-                    || (&self).aes_dma.channel.tx.has_error();
                 mem::forget(self);
                 if err {
                     Err((DmaError::DescriptorError, rbuffer, tbuffer, payload))
@@ -358,7 +372,7 @@ pub mod dma {
             self.aes_dma
                 .aes
                 .aes
-                .dma_exit
+                .dma_exit()
                 .write(|w| w.dma_exit().set_bit());
         }
     }
@@ -478,8 +492,9 @@ pub mod dma {
         pub fn reset_aes(&self) {
             unsafe {
                 let s = crate::peripherals::SYSTEM::steal();
-                s.perip_rst_en1.modify(|_, w| w.crypto_aes_rst().set_bit());
-                s.perip_rst_en1
+                s.perip_rst_en1()
+                    .modify(|_, w| w.crypto_aes_rst().set_bit());
+                s.perip_rst_en1()
                     .modify(|_, w| w.crypto_aes_rst().clear_bit());
             }
         }
@@ -488,8 +503,8 @@ pub mod dma {
         pub fn reset_aes(&self) {
             unsafe {
                 let s = crate::peripherals::PCR::steal();
-                s.aes_conf.modify(|_, w| w.aes_rst_en().set_bit());
-                s.aes_conf.modify(|_, w| w.aes_rst_en().clear_bit());
+                s.aes_conf().modify(|_, w| w.aes_rst_en().set_bit());
+                s.aes_conf().modify(|_, w| w.aes_rst_en().clear_bit());
             }
         }
 
@@ -500,45 +515,48 @@ pub mod dma {
         fn enable_dma(&self, enable: bool) {
             self.aes
                 .aes
-                .dma_enable
+                .dma_enable()
                 .write(|w| w.dma_enable().bit(enable));
         }
 
         fn enable_interrupt(&self) {
-            self.aes.aes.int_ena.write(|w| w.int_ena().set_bit());
+            self.aes.aes.int_ena().write(|w| w.int_ena().set_bit());
         }
 
         pub fn set_cipher_mode(&self, mode: CipherMode) {
             self.aes
                 .aes
-                .block_mode
+                .block_mode()
                 .modify(|_, w| unsafe { w.bits(mode as u32) });
 
-            if self.aes.aes.block_mode.read().block_mode().bits() == CipherMode::Ctr as u8 {
-                self.aes.aes.inc_sel.modify(|_, w| w.inc_sel().clear_bit());
+            if self.aes.aes.block_mode().read().block_mode().bits() == CipherMode::Ctr as u8 {
+                self.aes
+                    .aes
+                    .inc_sel()
+                    .modify(|_, w| w.inc_sel().clear_bit());
             }
         }
 
         pub fn set_mode(&self, mode: Mode) {
             self.aes
                 .aes
-                .mode
+                .mode()
                 .modify(|_, w| w.mode().variant(mode as u8));
         }
 
         fn start_transform(&self) {
-            self.aes.aes.trigger.write(|w| w.trigger().set_bit());
+            self.aes.aes.trigger().write(|w| w.trigger().set_bit());
         }
 
         pub fn finish_transform(&self) {
-            self.aes.aes.dma_exit.write(|w| w.dma_exit().set_bit());
+            self.aes.aes.dma_exit().write(|w| w.dma_exit().set_bit());
             self.enable_dma(false);
         }
 
         fn set_num_block(&self, block: u32) {
             self.aes
                 .aes
-                .block_num
+                .block_num()
                 .modify(|_, w| unsafe { w.block_num().bits(block) });
         }
     }

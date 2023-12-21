@@ -16,15 +16,12 @@
 //!
 //! let mut spi = hal::spi::Spi::new(
 //!     peripherals.SPI2,
-//!     sclk,
-//!     mosi,
-//!     miso,
-//!     cs,
 //!     100u32.kHz(),
 //!     SpiMode::Mode0,
 //!     &mut peripheral_clock_control,
 //!     &mut clocks,
-//! );
+//! )
+//! .with_pins(Some(sclk), Some(mosi), Some(miso), Some(cs));
 //! ```
 //!
 //! ## Exclusive access to the SPI bus
@@ -37,18 +34,18 @@
 //! - Use the [`SpiBus`](embedded_hal_1::spi::SpiBus) trait (requires the "eh1"
 //!   feature) and its associated functions to initiate transactions with
 //!   simultaneous reads and writes, or
-// TODO async moved to embedded-hal-bus:
-//! - Use the `ExclusiveDevice` struct from `embedded-hal-bus` or
-//!   `embedded-hal-async` (recommended).
+//! - Use the `ExclusiveDevice` struct from [`embedded-hal-bus`] or `SpiDevice`
+//!   from [`embassy-embedded-hal`].
 //!
 //!
 //! ## Shared SPI access
 //!
 //! If you have multiple devices on the same SPI bus that each have their own CS
-//! line, you may want to have a look at the [`ehal1::SpiBusController`] and
-//! [`ehal1::SpiBusDevice`] implemented here. These give exclusive access to the
-//! underlying SPI bus by means of a Mutex. This ensures that device
-//! transactions do not interfere with each other.
+//! line, you may want to have a look at the implementations provided by
+//! [`embedded-hal-bus`] and [`embassy-embedded-hal`].
+//!
+//! [`embedded-hal-bus`]: https://docs.rs/embedded-hal-bus/latest/embedded_hal_bus/spi/index.html
+//! [`embassy-embedded-hal`]: https://docs.embassy.dev/embassy-embedded-hal/git/default/shared_bus/index.html
 
 use core::marker::PhantomData;
 
@@ -392,114 +389,87 @@ where
     T: Instance,
 {
     /// Constructs an SPI instance in 8bit dataframe mode.
-    pub fn new<SCK: OutputPin, MOSI: OutputPin, MISO: InputPin, CS: OutputPin>(
+    ///
+    /// All pins are optional. Setup these pins using
+    /// [with_pins](Self::with_pins) or individual methods for each pin.
+    pub fn new(
         spi: impl Peripheral<P = T> + 'd,
-        sck: impl Peripheral<P = SCK> + 'd,
-        mosi: impl Peripheral<P = MOSI> + 'd,
-        miso: impl Peripheral<P = MISO> + 'd,
-        cs: impl Peripheral<P = CS> + 'd,
         frequency: HertzU32,
         mode: SpiMode,
         clocks: &Clocks,
     ) -> Spi<'d, T, FullDuplexMode> {
-        crate::into_ref!(spi, sck, mosi, miso, cs);
+        crate::into_ref!(spi);
+        Self::new_internal(spi, frequency, mode, clocks)
+    }
+
+    pub fn with_sck<SCK: OutputPin>(self, sck: impl Peripheral<P = SCK> + 'd) -> Self {
+        crate::into_ref!(sck);
         sck.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.sclk_signal());
+            .connect_peripheral_to_output(self.spi.sclk_signal());
 
+        self
+    }
+
+    pub fn with_mosi<MOSI: OutputPin>(self, mosi: impl Peripheral<P = MOSI> + 'd) -> Self {
+        crate::into_ref!(mosi);
         mosi.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.mosi_signal());
+            .connect_peripheral_to_output(self.spi.mosi_signal());
 
+        self
+    }
+
+    pub fn with_miso<MISO: InputPin>(self, miso: impl Peripheral<P = MISO> + 'd) -> Self {
+        crate::into_ref!(miso);
         miso.set_to_input()
-            .connect_input_to_peripheral(spi.miso_signal());
+            .connect_input_to_peripheral(self.spi.miso_signal());
 
+        self
+    }
+
+    pub fn with_cs<CS: OutputPin>(self, cs: impl Peripheral<P = CS> + 'd) -> Self {
+        crate::into_ref!(cs);
         cs.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.cs_signal());
+            .connect_peripheral_to_output(self.spi.cs_signal());
 
-        Self::new_internal(spi, frequency, mode, clocks)
+        self
     }
 
-    /// Constructs an SPI instance in 8bit dataframe mode without CS pin.
-    pub fn new_no_cs<SCK: OutputPin, MOSI: OutputPin, MISO: InputPin>(
-        spi: impl Peripheral<P = T> + 'd,
-        sck: impl Peripheral<P = SCK> + 'd,
-        mosi: impl Peripheral<P = MOSI> + 'd,
-        miso: impl Peripheral<P = MISO> + 'd,
-        frequency: HertzU32,
-        mode: SpiMode,
-        clocks: &Clocks,
-    ) -> Spi<'d, T, FullDuplexMode> {
-        crate::into_ref!(spi, sck, mosi, miso);
-        sck.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.sclk_signal());
+    /// Setup pins for this SPI instance.
+    ///
+    /// All pins are optional. Pass [crate::gpio::NO_PIN] if you don't need the
+    /// given pin.
+    pub fn with_pins<SCK: OutputPin, MOSI: OutputPin, MISO: InputPin, CS: OutputPin>(
+        self,
+        sck: Option<impl Peripheral<P = SCK> + 'd>,
+        mosi: Option<impl Peripheral<P = MOSI> + 'd>,
+        miso: Option<impl Peripheral<P = MISO> + 'd>,
+        cs: Option<impl Peripheral<P = CS> + 'd>,
+    ) -> Self {
+        if let Some(sck) = sck {
+            crate::into_ref!(sck);
+            sck.set_to_push_pull_output()
+                .connect_peripheral_to_output(self.spi.sclk_signal());
+        }
 
-        mosi.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.mosi_signal());
+        if let Some(mosi) = mosi {
+            crate::into_ref!(mosi);
+            mosi.set_to_push_pull_output()
+                .connect_peripheral_to_output(self.spi.mosi_signal());
+        }
 
-        miso.set_to_input()
-            .connect_input_to_peripheral(spi.miso_signal());
+        if let Some(miso) = miso {
+            crate::into_ref!(miso);
+            miso.set_to_input()
+                .connect_input_to_peripheral(self.spi.miso_signal());
+        }
 
-        Self::new_internal(spi, frequency, mode, clocks)
-    }
+        if let Some(cs) = cs {
+            crate::into_ref!(cs);
+            cs.set_to_push_pull_output()
+                .connect_peripheral_to_output(self.spi.cs_signal());
+        }
 
-    /// Constructs an SPI instance in 8bit dataframe mode without MISO pin.
-    pub fn new_no_miso<SCK: OutputPin, MOSI: OutputPin, CS: OutputPin>(
-        spi: impl Peripheral<P = T> + 'd,
-        sck: impl Peripheral<P = SCK> + 'd,
-        mosi: impl Peripheral<P = MOSI> + 'd,
-        cs: impl Peripheral<P = CS> + 'd,
-        frequency: HertzU32,
-        mode: SpiMode,
-        clocks: &Clocks,
-    ) -> Spi<'d, T, FullDuplexMode> {
-        crate::into_ref!(spi, sck, mosi, cs);
-        sck.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.sclk_signal());
-
-        mosi.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.mosi_signal());
-
-        cs.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.cs_signal());
-
-        Self::new_internal(spi, frequency, mode, clocks)
-    }
-
-    /// Constructs an SPI instance in 8bit dataframe mode without CS and MISO
-    /// pin.
-    pub fn new_no_cs_no_miso<SCK: OutputPin, MOSI: OutputPin>(
-        spi: impl Peripheral<P = T> + 'd,
-        sck: impl Peripheral<P = SCK> + 'd,
-        mosi: impl Peripheral<P = MOSI> + 'd,
-        frequency: HertzU32,
-        mode: SpiMode,
-        clocks: &Clocks,
-    ) -> Spi<'d, T, FullDuplexMode> {
-        crate::into_ref!(spi, sck, mosi);
-        sck.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.sclk_signal());
-
-        mosi.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.mosi_signal());
-
-        Self::new_internal(spi, frequency, mode, clocks)
-    }
-
-    /// Constructs an SPI instance in 8bit dataframe mode with only MOSI
-    /// connected. This might be useful for (ab)using SPI to  implement
-    /// other protocols by bitbanging (WS2812B, onewire, generating arbitrary
-    /// waveforms…)
-    pub fn new_mosi_only<MOSI: OutputPin>(
-        spi: impl Peripheral<P = T> + 'd,
-        mosi: impl Peripheral<P = MOSI> + 'd,
-        frequency: HertzU32,
-        mode: SpiMode,
-        clocks: &Clocks,
-    ) -> Spi<'d, T, FullDuplexMode> {
-        crate::into_ref!(spi, mosi);
-        mosi.set_to_push_pull_output()
-            .connect_peripheral_to_output(spi.mosi_signal());
-
-        Self::new_internal(spi, frequency, mode, clocks)
+        self
     }
 
     pub(crate) fn new_internal(
@@ -532,9 +502,91 @@ where
 {
     /// Constructs an SPI instance in half-duplex mode.
     ///
+    /// All pins are optional. Setup these pins using
+    /// [with_pins](Self::with_pins) or individual methods for each pin.
+    pub fn new_half_duplex(
+        spi: impl Peripheral<P = T> + 'd,
+        frequency: HertzU32,
+        mode: SpiMode,
+        clocks: &Clocks,
+    ) -> Spi<'d, T, HalfDuplexMode> {
+        crate::into_ref!(spi);
+        Self::new_internal(spi, frequency, mode, clocks)
+    }
+
+    pub fn with_sck<SCK: OutputPin>(self, sck: impl Peripheral<P = SCK> + 'd) -> Self {
+        crate::into_ref!(sck);
+        sck.set_to_push_pull_output()
+            .connect_peripheral_to_output(self.spi.sclk_signal());
+
+        self
+    }
+
+    pub fn with_mosi<MOSI: OutputPin + InputPin>(
+        self,
+        mosi: impl Peripheral<P = MOSI> + 'd,
+    ) -> Self {
+        crate::into_ref!(mosi);
+        mosi.enable_output(true);
+        mosi.connect_peripheral_to_output(self.spi.mosi_signal());
+        mosi.enable_input(true);
+        mosi.connect_input_to_peripheral(self.spi.sio0_input_signal());
+
+        self
+    }
+
+    pub fn with_miso<MISO: OutputPin + InputPin>(
+        self,
+        miso: impl Peripheral<P = MISO> + 'd,
+    ) -> Self {
+        crate::into_ref!(miso);
+        miso.enable_output(true);
+        miso.connect_peripheral_to_output(self.spi.sio1_output_signal());
+        miso.enable_input(true);
+        miso.connect_input_to_peripheral(self.spi.miso_signal());
+
+        self
+    }
+
+    pub fn with_sio2<SIO2: OutputPin + InputPin>(
+        self,
+        sio2: impl Peripheral<P = SIO2> + 'd,
+    ) -> Self {
+        crate::into_ref!(sio2);
+        sio2.enable_output(true);
+        sio2.connect_peripheral_to_output(self.spi.sio2_output_signal());
+        sio2.enable_input(true);
+        sio2.connect_input_to_peripheral(self.spi.sio2_input_signal());
+
+        self
+    }
+
+    pub fn with_sio3<SIO3: OutputPin + InputPin>(
+        self,
+        sio3: impl Peripheral<P = SIO3> + 'd,
+    ) -> Self {
+        crate::into_ref!(sio3);
+        sio3.enable_output(true);
+        sio3.connect_peripheral_to_output(self.spi.sio3_output_signal());
+        sio3.enable_input(true);
+        sio3.connect_input_to_peripheral(self.spi.sio3_input_signal());
+
+        self
+    }
+
+    pub fn with_cs<CS: OutputPin>(self, cs: impl Peripheral<P = CS> + 'd) -> Self {
+        crate::into_ref!(cs);
+        cs.set_to_push_pull_output()
+            .connect_peripheral_to_output(self.spi.cs_signal());
+
+        self
+    }
+
+    /// Setup pins for this SPI instance.
+    ///
     /// All pins are optional. Pass [crate::gpio::NO_PIN] if you don't need the
     /// given pin.
-    pub fn new_half_duplex<
+    pub fn with_pins<
         SCK: OutputPin,
         MOSI: OutputPin + InputPin,
         MISO: OutputPin + InputPin,
@@ -542,63 +594,59 @@ where
         SIO3: OutputPin + InputPin,
         CS: OutputPin,
     >(
-        spi: impl Peripheral<P = T> + 'd,
+        self,
         sck: Option<impl Peripheral<P = SCK> + 'd>,
         mosi: Option<impl Peripheral<P = MOSI> + 'd>,
         miso: Option<impl Peripheral<P = MISO> + 'd>,
         sio2: Option<impl Peripheral<P = SIO2> + 'd>,
         sio3: Option<impl Peripheral<P = SIO3> + 'd>,
         cs: Option<impl Peripheral<P = CS> + 'd>,
-        frequency: HertzU32,
-        mode: SpiMode,
-        clocks: &Clocks,
-    ) -> Spi<'d, T, HalfDuplexMode> {
-        crate::into_ref!(spi);
+    ) -> Self {
         if let Some(sck) = sck {
             crate::into_ref!(sck);
             sck.set_to_push_pull_output()
-                .connect_peripheral_to_output(spi.sclk_signal());
+                .connect_peripheral_to_output(self.spi.sclk_signal());
         }
 
         if let Some(mosi) = mosi {
             crate::into_ref!(mosi);
             mosi.enable_output(true);
-            mosi.connect_peripheral_to_output(spi.mosi_signal());
+            mosi.connect_peripheral_to_output(self.spi.mosi_signal());
             mosi.enable_input(true);
-            mosi.connect_input_to_peripheral(spi.sio0_input_signal());
+            mosi.connect_input_to_peripheral(self.spi.sio0_input_signal());
         }
 
         if let Some(miso) = miso {
             crate::into_ref!(miso);
             miso.enable_output(true);
-            miso.connect_peripheral_to_output(spi.sio1_output_signal());
+            miso.connect_peripheral_to_output(self.spi.sio1_output_signal());
             miso.enable_input(true);
-            miso.connect_input_to_peripheral(spi.miso_signal());
+            miso.connect_input_to_peripheral(self.spi.miso_signal());
         }
 
         if let Some(sio2) = sio2 {
             crate::into_ref!(sio2);
             sio2.enable_output(true);
-            sio2.connect_peripheral_to_output(spi.sio2_output_signal());
+            sio2.connect_peripheral_to_output(self.spi.sio2_output_signal());
             sio2.enable_input(true);
-            sio2.connect_input_to_peripheral(spi.sio2_input_signal());
+            sio2.connect_input_to_peripheral(self.spi.sio2_input_signal());
         }
 
         if let Some(sio3) = sio3 {
             crate::into_ref!(sio3);
             sio3.enable_output(true);
-            sio3.connect_peripheral_to_output(spi.sio3_output_signal());
+            sio3.connect_peripheral_to_output(self.spi.sio3_output_signal());
             sio3.enable_input(true);
-            sio3.connect_input_to_peripheral(spi.sio3_input_signal());
+            sio3.connect_input_to_peripheral(self.spi.sio3_input_signal());
         }
 
         if let Some(cs) = cs {
             crate::into_ref!(cs);
             cs.set_to_push_pull_output()
-                .connect_peripheral_to_output(spi.cs_signal());
+                .connect_peripheral_to_output(self.spi.cs_signal());
         }
 
-        Self::new_internal(spi, frequency, mode, clocks)
+        self
     }
 
     pub(crate) fn new_internal(
@@ -828,7 +876,10 @@ pub mod dma {
             (RXBUF, TXBUF, SpiDma<'d, T, C, M>),
             (DmaError, RXBUF, TXBUF, SpiDma<'d, T, C, M>),
         > {
-            self.spi_dma.spi.flush().ok(); // waiting for the DMA transfer is not enough
+            // Waiting for the DMA transfer is not enough. We need to wait for the
+            // peripheral to finish flushing its buffers, too.
+            self.spi_dma.spi.flush().ok();
+            let err = self.spi_dma.channel.rx.has_error() || self.spi_dma.channel.tx.has_error();
 
             // `DmaTransfer` needs to have a `Drop` implementation, because we accept
             // managed buffers that can free their memory on drop. Because of that
@@ -841,8 +892,6 @@ pub mod dma {
                 let rbuffer = core::ptr::read(&self.rbuffer);
                 let tbuffer = core::ptr::read(&self.tbuffer);
                 let payload = core::ptr::read(&self.spi_dma);
-                let err = (&self).spi_dma.channel.rx.has_error()
-                    || (&self).spi_dma.channel.tx.has_error();
                 mem::forget(self);
                 if err {
                     Err((DmaError::DescriptorError, rbuffer, tbuffer, payload))
@@ -897,7 +946,10 @@ pub mod dma {
             mut self,
         ) -> Result<(BUFFER, SpiDma<'d, T, C, M>), (DmaError, BUFFER, SpiDma<'d, T, C, M>)>
         {
-            self.spi_dma.spi.flush().ok(); // waiting for the DMA transfer is not enough
+            // Waiting for the DMA transfer is not enough. We need to wait for the
+            // peripheral to finish flushing its buffers, too.
+            self.spi_dma.spi.flush().ok();
+            let err = self.spi_dma.channel.rx.has_error() || self.spi_dma.channel.tx.has_error();
 
             // `DmaTransfer` needs to have a `Drop` implementation, because we accept
             // managed buffers that can free their memory on drop. Because of that
@@ -909,8 +961,6 @@ pub mod dma {
             unsafe {
                 let buffer = core::ptr::read(&self.buffer);
                 let payload = core::ptr::read(&self.spi_dma);
-                let err = (&self).spi_dma.channel.rx.has_error()
-                    || (&self).spi_dma.channel.tx.has_error();
                 mem::forget(self);
                 if err {
                     Err((DmaError::DescriptorError, buffer, payload))
@@ -1109,7 +1159,7 @@ pub mod dma {
             // set cmd, address, dummy cycles
             let reg_block = self.spi.register_block();
             if !cmd.is_none() {
-                reg_block.user2.modify(|_, w| {
+                reg_block.user2().modify(|_, w| {
                     w.usr_command_bitlen()
                         .variant((cmd.width() - 1) as u8)
                         .usr_command_value()
@@ -1120,26 +1170,26 @@ pub mod dma {
             #[cfg(not(esp32))]
             if !address.is_none() {
                 reg_block
-                    .user1
+                    .user1()
                     .modify(|_, w| w.usr_addr_bitlen().variant((address.width() - 1) as u8));
 
                 let addr = address.value() << (32 - address.width());
-                reg_block.addr.write(|w| w.usr_addr_value().variant(addr));
+                reg_block.addr().write(|w| w.usr_addr_value().variant(addr));
             }
 
             #[cfg(esp32)]
             if !address.is_none() {
-                reg_block.user1.modify(|r, w| unsafe {
+                reg_block.user1().modify(|r, w| unsafe {
                     w.bits(r.bits() & !(0x3f << 26) | (((address.width() - 1) as u32) & 0x3f) << 26)
                 });
 
                 let addr = address.value() << (32 - address.width());
-                reg_block.addr.write(|w| unsafe { w.bits(addr) });
+                reg_block.addr().write(|w| unsafe { w.bits(addr) });
             }
 
             if dummy > 0 {
                 reg_block
-                    .user1
+                    .user1()
                     .modify(|_, w| w.usr_dummy_cyclelen().variant(dummy - 1));
             }
 
@@ -1147,7 +1197,7 @@ pub mod dma {
                 .start_read_bytes_dma(ptr, len, &mut self.channel.rx, false)?;
             Ok(SpiDmaTransfer {
                 spi_dma: self,
-                buffer: buffer,
+                buffer,
             })
         }
 
@@ -1182,7 +1232,7 @@ pub mod dma {
             // set cmd, address, dummy cycles
             let reg_block = self.spi.register_block();
             if !cmd.is_none() {
-                reg_block.user2.modify(|_, w| {
+                reg_block.user2().modify(|_, w| {
                     w.usr_command_bitlen()
                         .variant((cmd.width() - 1) as u8)
                         .usr_command_value()
@@ -1193,26 +1243,26 @@ pub mod dma {
             #[cfg(not(esp32))]
             if !address.is_none() {
                 reg_block
-                    .user1
+                    .user1()
                     .modify(|_, w| w.usr_addr_bitlen().variant((address.width() - 1) as u8));
 
                 let addr = address.value() << (32 - address.width());
-                reg_block.addr.write(|w| w.usr_addr_value().variant(addr));
+                reg_block.addr().write(|w| w.usr_addr_value().variant(addr));
             }
 
             #[cfg(esp32)]
             if !address.is_none() {
-                reg_block.user1.modify(|r, w| unsafe {
+                reg_block.user1().modify(|r, w| unsafe {
                     w.bits(r.bits() & !(0x3f << 26) | (((address.width() - 1) as u32) & 0x3f) << 26)
                 });
 
                 let addr = address.value() << (32 - address.width());
-                reg_block.addr.write(|w| unsafe { w.bits(addr) });
+                reg_block.addr().write(|w| unsafe { w.bits(addr) });
             }
 
             if dummy > 0 {
                 reg_block
-                    .user1
+                    .user1()
                     .modify(|_, w| w.usr_dummy_cyclelen().variant(dummy - 1));
             }
 
@@ -1220,7 +1270,7 @@ pub mod dma {
                 .start_write_bytes_dma(ptr, len, &mut self.channel.tx, false)?;
             Ok(SpiDmaTransfer {
                 spi_dma: self,
-                buffer: buffer,
+                buffer,
             })
         }
     }
@@ -1467,19 +1517,19 @@ pub mod dma {
 
     #[cfg(feature = "eh1")]
     mod ehal1 {
-        use embedded_hal_1::spi::SpiBus;
+        use embedded_hal_1::spi::{ErrorType, SpiBus};
 
         use super::{super::InstanceDma, *};
         use crate::{dma::ChannelTypes, FlashSafeDma};
 
-        impl<'d, T, C, M> embedded_hal_1::spi::ErrorType for SpiDma<'d, T, C, M>
+        impl<'d, T, C, M> ErrorType for SpiDma<'d, T, C, M>
         where
             T: InstanceDma<C::Tx<'d>, C::Rx<'d>>,
             C: ChannelTypes,
             C::P: SpiPeripheral,
             M: IsFullDuplex,
         {
-            type Error = super::super::Error;
+            type Error = Error;
         }
 
         impl<'d, T, C, M> SpiBus for SpiDma<'d, T, C, M>
@@ -1526,15 +1576,11 @@ pub mod dma {
             }
         }
 
-        impl<T: embedded_hal_1::spi::ErrorType, const SIZE: usize> embedded_hal_1::spi::ErrorType
-            for FlashSafeDma<T, SIZE>
-        {
+        impl<T: ErrorType, const SIZE: usize> ErrorType for FlashSafeDma<T, SIZE> {
             type Error = T::Error;
         }
 
-        impl<T: embedded_hal_1::spi::SpiBus, const SIZE: usize> embedded_hal_1::spi::SpiBus
-            for FlashSafeDma<T, SIZE>
-        {
+        impl<T: SpiBus, const SIZE: usize> SpiBus for FlashSafeDma<T, SIZE> {
             fn read(&mut self, words: &mut [u8]) -> Result<(), Self::Error> {
                 self.inner.read(words)
             }
@@ -1577,17 +1623,11 @@ pub mod dma {
 }
 
 #[cfg(feature = "eh1")]
-pub use ehal1::*;
-
-#[cfg(feature = "eh1")]
 mod ehal1 {
-    use core::cell::RefCell;
-
-    use embedded_hal_1::spi::{self, ErrorType, Operation, SpiBus, SpiDevice};
+    use embedded_hal_1::spi::SpiBus;
     use embedded_hal_nb::spi::FullDuplex;
 
     use super::*;
-    use crate::gpio::OutputPin;
 
     impl<T, M> embedded_hal_1::spi::ErrorType for Spi<'_, T, M> {
         type Error = super::Error;
@@ -1679,102 +1719,6 @@ mod ehal1 {
             self.spi.flush()
         }
     }
-
-    /// SPI bus controller.
-    ///
-    /// Has exclusive access to an SPI bus, which is managed via a `Mutex`. Used
-    /// as basis for the [`SpiBusDevice`] implementation. Note that the
-    /// wrapped [`RefCell`] is used solely to achieve interior mutability.
-    pub struct SpiBusController<'d, I: Instance, M: IsFullDuplex> {
-        lock: critical_section::Mutex<RefCell<Spi<'d, I, M>>>,
-    }
-
-    impl<'d, I: Instance, M: IsFullDuplex> SpiBusController<'d, I, M> {
-        /// Create a new controller from an SPI bus instance.
-        ///
-        /// Takes ownership of the SPI bus in the process. Afterwards, the SPI
-        /// bus can only be accessed via instances of [`SpiBusDevice`].
-        pub fn from_spi(bus: Spi<'d, I, M>) -> Self {
-            SpiBusController {
-                lock: critical_section::Mutex::new(RefCell::new(bus)),
-            }
-        }
-
-        pub fn add_device<'a, CS: OutputPin>(&'a self, cs: CS) -> SpiBusDevice<'a, 'd, I, CS, M> {
-            SpiBusDevice::new(self, cs)
-        }
-    }
-
-    impl<'d, I: Instance, M: IsFullDuplex> ErrorType for SpiBusController<'d, I, M> {
-        type Error = spi::ErrorKind;
-    }
-
-    /// An SPI device on a shared SPI bus.
-    ///
-    /// Provides device specific access on a shared SPI bus. Enables attaching
-    /// multiple SPI devices to the same bus, each with its own CS line, and
-    /// performing safe transfers on them.
-    pub struct SpiBusDevice<'a, 'd, I, CS, M>
-    where
-        I: Instance,
-        CS: OutputPin,
-        M: IsFullDuplex,
-    {
-        bus: &'a SpiBusController<'d, I, M>,
-        cs: CS,
-    }
-
-    impl<'a, 'd, I, CS, M> SpiBusDevice<'a, 'd, I, CS, M>
-    where
-        I: Instance,
-        CS: OutputPin,
-        M: IsFullDuplex,
-    {
-        pub fn new(bus: &'a SpiBusController<'d, I, M>, mut cs: CS) -> Self {
-            cs.set_to_push_pull_output().set_output_high(true);
-            SpiBusDevice { bus, cs }
-        }
-    }
-
-    impl<'a, 'd, I, CS, M> ErrorType for SpiBusDevice<'a, 'd, I, CS, M>
-    where
-        I: Instance,
-        CS: OutputPin,
-        M: IsFullDuplex,
-    {
-        type Error = spi::ErrorKind;
-    }
-
-    impl<'a, 'd, I, CS, M> SpiDevice<u8> for SpiBusDevice<'a, 'd, I, CS, M>
-    where
-        I: Instance,
-        CS: OutputPin,
-        M: IsFullDuplex,
-    {
-        fn transaction(&mut self, operations: &mut [Operation<'_, u8>]) -> Result<(), Self::Error> {
-            critical_section::with(|cs| {
-                let mut bus = self.bus.lock.borrow_ref_mut(cs);
-                self.cs.connect_peripheral_to_output(bus.spi.cs_signal());
-
-                let op_res = operations.iter_mut().try_for_each(|op| match op {
-                    Operation::Read(buf) => SpiBus::read(&mut (*bus), buf),
-                    Operation::Write(buf) => SpiBus::write(&mut (*bus), buf),
-                    Operation::Transfer(read, write) => bus.transfer(read, write),
-                    Operation::TransferInPlace(buf) => bus.transfer_in_place(buf),
-                    Operation::DelayUs(_delay) => unimplemented!(),
-                });
-
-                // On failure, it's important to still flush and de-assert CS.
-                let flush_res = bus.flush();
-                self.cs.disconnect_peripheral_from_output();
-
-                op_res.map_err(|_| spi::ErrorKind::Other)?;
-                flush_res.map_err(|_| spi::ErrorKind::Other)?;
-
-                Ok(())
-            })
-        }
-    }
 }
 
 pub trait InstanceDma<TX, RX>: Instance
@@ -1803,7 +1747,7 @@ where
             self.flush().unwrap();
         }
 
-        return Ok(words);
+        Ok(words)
     }
 
     fn transfer_dma<'w>(
@@ -1840,7 +1784,7 @@ where
             }
         }
 
-        return Ok(read_buffer);
+        Ok(read_buffer)
     }
 
     fn start_transfer_dma<'w>(
@@ -1885,7 +1829,7 @@ where
             tx.listen_eof();
             rx.listen_eof();
         }
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
 
         Ok(())
     }
@@ -1898,7 +1842,7 @@ where
             self.flush().unwrap(); // seems "is_done" doesn't work as intended?
         }
 
-        return Ok(words);
+        Ok(words)
     }
 
     fn start_write_bytes_dma<'w>(
@@ -1926,9 +1870,9 @@ where
         if listen {
             tx.listen_eof();
         }
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
 
-        return Ok(());
+        Ok(())
     }
 
     fn start_read_bytes_dma<'w>(
@@ -1956,9 +1900,9 @@ where
         if listen {
             rx.listen_eof();
         }
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
 
-        return Ok(());
+        Ok(())
     }
 
     fn dma_peripheral(&self) -> DmaPeripheral {
@@ -1973,8 +1917,8 @@ where
     #[cfg(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3))]
     fn enable_dma(&self) {
         let reg_block = self.register_block();
-        reg_block.dma_conf.modify(|_, w| w.dma_tx_ena().set_bit());
-        reg_block.dma_conf.modify(|_, w| w.dma_rx_ena().set_bit());
+        reg_block.dma_conf().modify(|_, w| w.dma_tx_ena().set_bit());
+        reg_block.dma_conf().modify(|_, w| w.dma_rx_ena().set_bit());
     }
 
     #[cfg(any(esp32, esp32s2))]
@@ -1985,7 +1929,7 @@ where
     #[cfg(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3))]
     fn clear_dma_interrupts(&self) {
         let reg_block = self.register_block();
-        reg_block.dma_int_clr.write(|w| {
+        reg_block.dma_int_clr().write(|w| {
             w.dma_infifo_full_err_int_clr()
                 .set_bit()
                 .dma_outfifo_empty_err_int_clr()
@@ -2002,7 +1946,7 @@ where
     #[cfg(any(esp32, esp32s2))]
     fn clear_dma_interrupts(&self) {
         let reg_block = self.register_block();
-        reg_block.dma_int_clr.write(|w| {
+        reg_block.dma_int_clr().write(|w| {
             w.inlink_dscr_empty_int_clr()
                 .set_bit()
                 .outlink_dscr_error_int_clr()
@@ -2027,7 +1971,7 @@ where
 
 #[cfg(not(any(esp32, esp32s2)))]
 fn reset_dma_before_usr_cmd(reg_block: &RegisterBlock) {
-    reg_block.dma_conf.modify(|_, w| {
+    reg_block.dma_conf().modify(|_, w| {
         w.rx_afifo_rst()
             .set_bit()
             .buf_afifo_rst()
@@ -2045,7 +1989,7 @@ fn reset_dma_before_load_dma_dscr(_reg_block: &RegisterBlock) {}
 
 #[cfg(any(esp32, esp32s2))]
 fn reset_dma_before_load_dma_dscr(reg_block: &RegisterBlock) {
-    reg_block.dma_conf.modify(|_, w| {
+    reg_block.dma_conf().modify(|_, w| {
         w.out_rst()
             .set_bit()
             .in_rst()
@@ -2056,7 +2000,7 @@ fn reset_dma_before_load_dma_dscr(reg_block: &RegisterBlock) {
             .set_bit()
     });
 
-    reg_block.dma_conf.modify(|_, w| {
+    reg_block.dma_conf().modify(|_, w| {
         w.out_rst()
             .clear_bit()
             .in_rst()
@@ -2115,7 +2059,7 @@ pub trait Instance {
     /// Initialize for full-duplex 1 bit mode
     fn init(&mut self) {
         let reg_block = self.register_block();
-        reg_block.user.modify(|_, w| {
+        reg_block.user().modify(|_, w| {
             w.usr_miso_highpart()
                 .clear_bit()
                 .usr_miso_highpart()
@@ -2137,7 +2081,7 @@ pub trait Instance {
         });
 
         #[cfg(not(any(esp32, esp32s2)))]
-        reg_block.clk_gate.modify(|_, w| {
+        reg_block.clk_gate().modify(|_, w| {
             w.clk_en()
                 .set_bit()
                 .mst_clk_active()
@@ -2151,12 +2095,12 @@ pub trait Instance {
             // use default clock source PLL_F80M_CLK (ESP32-C6) and
             // PLL_F48M_CLK (ESP32-H2)
             (&*crate::peripherals::PCR::PTR)
-                .spi2_clkm_conf
+                .spi2_clkm_conf()
                 .modify(|_, w| w.spi2_clkm_sel().bits(1));
         }
 
         #[cfg(not(any(esp32, esp32s2)))]
-        reg_block.ctrl.modify(|_, w| {
+        reg_block.ctrl().modify(|_, w| {
             w.q_pol()
                 .clear_bit()
                 .d_pol()
@@ -2167,16 +2111,16 @@ pub trait Instance {
 
         #[cfg(esp32s2)]
         reg_block
-            .ctrl
+            .ctrl()
             .modify(|_, w| w.q_pol().clear_bit().d_pol().clear_bit().wp().clear_bit());
 
         #[cfg(esp32)]
-        reg_block.ctrl.modify(|_, w| w.wp().clear_bit());
+        reg_block.ctrl().modify(|_, w| w.wp().clear_bit());
 
         #[cfg(not(esp32))]
-        reg_block.misc.write(|w| unsafe { w.bits(0) });
+        reg_block.misc().write(|w| unsafe { w.bits(0) });
 
-        reg_block.slave.write(|w| unsafe { w.bits(0) });
+        reg_block.slave().write(|w| unsafe { w.bits(0) });
     }
 
     #[cfg(not(esp32))]
@@ -2189,51 +2133,51 @@ pub trait Instance {
         let reg_block = self.register_block();
         match cmd_mode {
             SpiDataMode::Single => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.fcmd_dual().clear_bit().fcmd_quad().clear_bit()),
             SpiDataMode::Dual => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.fcmd_dual().set_bit().fcmd_quad().clear_bit()),
             SpiDataMode::Quad => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.fcmd_dual().clear_bit().fcmd_quad().set_bit()),
         }
 
         match address_mode {
             SpiDataMode::Single => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.faddr_dual().clear_bit().faddr_quad().clear_bit()),
             SpiDataMode::Dual => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.faddr_dual().set_bit().faddr_quad().clear_bit()),
             SpiDataMode::Quad => reg_block
-                .ctrl
+                .ctrl()
                 .modify(|_, w| w.faddr_dual().clear_bit().faddr_quad().set_bit()),
         }
 
         match data_mode {
             SpiDataMode::Single => {
                 reg_block
-                    .ctrl
+                    .ctrl()
                     .modify(|_, w| w.fread_dual().clear_bit().fread_quad().clear_bit());
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.fwrite_dual().clear_bit().fwrite_quad().clear_bit());
             }
             SpiDataMode::Dual => {
                 reg_block
-                    .ctrl
+                    .ctrl()
                     .modify(|_, w| w.fread_dual().set_bit().fread_quad().clear_bit());
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.fwrite_dual().set_bit().fwrite_quad().clear_bit());
             }
             SpiDataMode::Quad => {
                 reg_block
-                    .ctrl
+                    .ctrl()
                     .modify(|_, w| w.fread_quad().set_bit().fread_dual().clear_bit());
                 reg_block
-                    .user
+                    .user()
                     .modify(|_, w| w.fwrite_quad().set_bit().fwrite_dual().clear_bit());
             }
         }
@@ -2254,7 +2198,7 @@ pub trait Instance {
 
         match (address_mode, data_mode) {
             (SpiDataMode::Single, SpiDataMode::Single) => {
-                reg_block.ctrl.modify(|_, w| {
+                reg_block.ctrl().modify(|_, w| {
                     w.fread_dio()
                         .clear_bit()
                         .fread_qio()
@@ -2265,7 +2209,7 @@ pub trait Instance {
                         .clear_bit()
                 });
 
-                reg_block.user.modify(|_, w| {
+                reg_block.user().modify(|_, w| {
                     w.fwrite_dio()
                         .clear_bit()
                         .fwrite_qio()
@@ -2277,7 +2221,7 @@ pub trait Instance {
                 });
             }
             (SpiDataMode::Single, SpiDataMode::Dual) => {
-                reg_block.ctrl.modify(|_, w| {
+                reg_block.ctrl().modify(|_, w| {
                     w.fread_dio()
                         .clear_bit()
                         .fread_qio()
@@ -2288,7 +2232,7 @@ pub trait Instance {
                         .clear_bit()
                 });
 
-                reg_block.user.modify(|_, w| {
+                reg_block.user().modify(|_, w| {
                     w.fwrite_dio()
                         .clear_bit()
                         .fwrite_qio()
@@ -2300,7 +2244,7 @@ pub trait Instance {
                 });
             }
             (SpiDataMode::Single, SpiDataMode::Quad) => {
-                reg_block.ctrl.modify(|_, w| {
+                reg_block.ctrl().modify(|_, w| {
                     w.fread_dio()
                         .clear_bit()
                         .fread_qio()
@@ -2311,7 +2255,7 @@ pub trait Instance {
                         .set_bit()
                 });
 
-                reg_block.user.modify(|_, w| {
+                reg_block.user().modify(|_, w| {
                     w.fwrite_dio()
                         .clear_bit()
                         .fwrite_qio()
@@ -2326,7 +2270,7 @@ pub trait Instance {
                 panic!("Unsupported combination of data-modes")
             }
             (SpiDataMode::Dual, SpiDataMode::Dual) => {
-                reg_block.ctrl.modify(|_, w| {
+                reg_block.ctrl().modify(|_, w| {
                     w.fread_dio()
                         .set_bit()
                         .fread_qio()
@@ -2337,7 +2281,7 @@ pub trait Instance {
                         .clear_bit()
                 });
 
-                reg_block.user.modify(|_, w| {
+                reg_block.user().modify(|_, w| {
                     w.fwrite_dio()
                         .set_bit()
                         .fwrite_qio()
@@ -2358,7 +2302,7 @@ pub trait Instance {
                 panic!("Unsupported combination of data-modes")
             }
             (SpiDataMode::Quad, SpiDataMode::Quad) => {
-                reg_block.ctrl.modify(|_, w| {
+                reg_block.ctrl().modify(|_, w| {
                     w.fread_dio()
                         .clear_bit()
                         .fread_qio()
@@ -2369,7 +2313,7 @@ pub trait Instance {
                         .clear_bit()
                 });
 
-                reg_block.user.modify(|_, w| {
+                reg_block.user().modify(|_, w| {
                     w.fwrite_dio()
                         .clear_bit()
                         .fwrite_qio()
@@ -2466,7 +2410,7 @@ pub trait Instance {
         }
 
         self.register_block()
-            .clock
+            .clock()
             .write(|w| unsafe { w.bits(reg_val) });
     }
 
@@ -2476,20 +2420,20 @@ pub trait Instance {
 
         match data_mode {
             SpiMode::Mode0 => {
-                reg_block.misc.modify(|_, w| w.ck_idle_edge().clear_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().clear_bit());
+                reg_block.misc().modify(|_, w| w.ck_idle_edge().clear_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().clear_bit());
             }
             SpiMode::Mode1 => {
-                reg_block.misc.modify(|_, w| w.ck_idle_edge().clear_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().set_bit());
+                reg_block.misc().modify(|_, w| w.ck_idle_edge().clear_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().set_bit());
             }
             SpiMode::Mode2 => {
-                reg_block.misc.modify(|_, w| w.ck_idle_edge().set_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().set_bit());
+                reg_block.misc().modify(|_, w| w.ck_idle_edge().set_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().set_bit());
             }
             SpiMode::Mode3 => {
-                reg_block.misc.modify(|_, w| w.ck_idle_edge().set_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().clear_bit());
+                reg_block.misc().modify(|_, w| w.ck_idle_edge().set_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().clear_bit());
             }
         }
         self
@@ -2501,20 +2445,20 @@ pub trait Instance {
 
         match data_mode {
             SpiMode::Mode0 => {
-                reg_block.pin.modify(|_, w| w.ck_idle_edge().clear_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().clear_bit());
+                reg_block.pin().modify(|_, w| w.ck_idle_edge().clear_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().clear_bit());
             }
             SpiMode::Mode1 => {
-                reg_block.pin.modify(|_, w| w.ck_idle_edge().clear_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().set_bit());
+                reg_block.pin().modify(|_, w| w.ck_idle_edge().clear_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().set_bit());
             }
             SpiMode::Mode2 => {
-                reg_block.pin.modify(|_, w| w.ck_idle_edge().set_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().set_bit());
+                reg_block.pin().modify(|_, w| w.ck_idle_edge().set_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().set_bit());
             }
             SpiMode::Mode3 => {
-                reg_block.pin.modify(|_, w| w.ck_idle_edge().set_bit());
-                reg_block.user.modify(|_, w| w.ck_out_edge().clear_bit());
+                reg_block.pin().modify(|_, w| w.ck_idle_edge().set_bit());
+                reg_block.user().modify(|_, w| w.ck_out_edge().clear_bit());
             }
         }
         self
@@ -2523,7 +2467,7 @@ pub trait Instance {
     fn ch_bus_freq(&mut self, frequency: HertzU32, clocks: &Clocks) {
         // Disable clock source
         #[cfg(not(any(feature = "esp32", feature = "esp32s2")))]
-        self.register_block().clk_gate.modify(|_, w| {
+        self.register_block().clk_gate().modify(|_, w| {
             w.clk_en()
                 .clear_bit()
                 .mst_clk_active()
@@ -2537,7 +2481,7 @@ pub trait Instance {
 
         // Enable clock source
         #[cfg(not(any(feature = "esp32", feature = "esp32s2")))]
-        self.register_block().clk_gate.modify(|_, w| {
+        self.register_block().clk_gate().modify(|_, w| {
             w.clk_en()
                 .set_bit()
                 .mst_clk_active()
@@ -2548,29 +2492,27 @@ pub trait Instance {
     }
 
     fn read_byte(&mut self) -> nb::Result<u8, Error> {
-        let reg_block = self.register_block();
-
-        if reg_block.cmd.read().usr().bit_is_set() {
+        if self.busy() {
             return Err(nb::Error::WouldBlock);
         }
 
-        Ok(u32::try_into(reg_block.w0.read().bits()).unwrap_or_default())
+        let reg_block = self.register_block();
+        Ok(u32::try_into(reg_block.w0().read().bits()).unwrap_or_default())
     }
 
     fn write_byte(&mut self, word: u8) -> nb::Result<(), Error> {
-        let reg_block = self.register_block();
-
-        if reg_block.cmd.read().usr().bit_is_set() {
+        if self.busy() {
             return Err(nb::Error::WouldBlock);
         }
 
         self.configure_datalen(8);
 
-        reg_block.w0.write(|w| unsafe { w.bits(word.into()) });
+        let reg_block = self.register_block();
+        reg_block.w0().write(|w| unsafe { w.bits(word.into()) });
 
         self.update();
 
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
 
         Ok(())
     }
@@ -2585,7 +2527,6 @@ pub trait Instance {
     /// [`Self::flush`].
     // FIXME: See below.
     fn write_bytes(&mut self, words: &[u8]) -> Result<(), Error> {
-        let reg_block = self.register_block();
         let num_chunks = words.len() / FIFO_SIZE;
 
         // The fifo has a limited fixed size, so the data must be chunked and then
@@ -2593,7 +2534,7 @@ pub trait Instance {
         for (i, chunk) in words.chunks(FIFO_SIZE).enumerate() {
             self.configure_datalen(chunk.len() as u32 * 8);
 
-            let fifo_ptr = reg_block.w0.as_ptr();
+            let fifo_ptr = self.register_block().w0().as_ptr();
             for i in (0..chunk.len()).step_by(4) {
                 let state = if chunk.len() - i < 4 {
                     chunk.len() % 4
@@ -2625,7 +2566,7 @@ pub trait Instance {
 
             self.update();
 
-            reg_block.cmd.modify(|_, w| w.usr().set_bit());
+            self.register_block().cmd().modify(|_, w| w.usr().set_bit());
 
             // Wait for all chunks to complete except the last one.
             // The function is allowed to return before the bus is idle.
@@ -2634,9 +2575,7 @@ pub trait Instance {
             // THIS IS NOT TRUE FOR EH 0.2.X! MAKE SURE TO FLUSH IN EH 0.2.X TRAIT
             // IMPLEMENTATIONS!
             if i < num_chunks {
-                while reg_block.cmd.read().usr().bit_is_set() {
-                    // wait
-                }
+                self.flush()?;
             }
         }
         Ok(())
@@ -2673,7 +2612,7 @@ pub trait Instance {
         for chunk in words.chunks_mut(FIFO_SIZE) {
             self.configure_datalen(chunk.len() as u32 * 8);
 
-            let mut fifo_ptr = reg_block.w0.as_ptr();
+            let mut fifo_ptr = reg_block.w0().as_ptr();
             for index in (0..chunk.len()).step_by(4) {
                 let reg_val = unsafe { *fifo_ptr };
                 let bytes = reg_val.to_le_bytes();
@@ -2690,11 +2629,14 @@ pub trait Instance {
         Ok(())
     }
 
+    fn busy(&self) -> bool {
+        let reg_block = self.register_block();
+        reg_block.cmd().read().usr().bit_is_set()
+    }
+
     // Check if the bus is busy and if it is wait for it to be idle
     fn flush(&mut self) -> Result<(), Error> {
-        let reg_block = self.register_block();
-
-        while reg_block.cmd.read().usr().bit_is_set() {
+        while self.busy() {
             // wait for bus to be clear
         }
         Ok(())
@@ -2713,7 +2655,7 @@ pub trait Instance {
     fn start_operation(&self) {
         let reg_block = self.register_block();
         self.update();
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
     }
 
     fn init_half_duplex(
@@ -2726,7 +2668,7 @@ pub trait Instance {
         no_mosi_miso: bool,
     ) {
         let reg_block = self.register_block();
-        reg_block.user.modify(|_, w| {
+        reg_block.user().modify(|_, w| {
             w.usr_miso_highpart()
                 .clear_bit()
                 .usr_miso_highpart()
@@ -2750,7 +2692,7 @@ pub trait Instance {
         });
 
         #[cfg(not(any(esp32, esp32s2)))]
-        reg_block.clk_gate.modify(|_, w| {
+        reg_block.clk_gate().modify(|_, w| {
             w.clk_en()
                 .set_bit()
                 .mst_clk_active()
@@ -2764,13 +2706,14 @@ pub trait Instance {
             let pcr = &*crate::peripherals::PCR::PTR;
 
             // use default clock source PLL_F80M_CLK
-            pcr.spi2_clkm_conf.modify(|_, w| w.spi2_clkm_sel().bits(1));
+            pcr.spi2_clkm_conf()
+                .modify(|_, w| w.spi2_clkm_sel().bits(1));
         }
 
         #[cfg(not(esp32))]
-        reg_block.misc.write(|w| unsafe { w.bits(0) });
+        reg_block.misc().write(|w| unsafe { w.bits(0) });
 
-        reg_block.slave.write(|w| unsafe { w.bits(0) });
+        reg_block.slave().write(|w| unsafe { w.bits(0) });
 
         self.update();
     }
@@ -2794,7 +2737,7 @@ pub trait Instance {
         // set cmd, address, dummy cycles
         let reg_block = self.register_block();
         if !cmd.is_none() {
-            reg_block.user2.modify(|_, w| {
+            reg_block.user2().modify(|_, w| {
                 w.usr_command_bitlen()
                     .variant((cmd.width() - 1) as u8)
                     .usr_command_value()
@@ -2805,26 +2748,26 @@ pub trait Instance {
         #[cfg(not(esp32))]
         if !address.is_none() {
             reg_block
-                .user1
+                .user1()
                 .modify(|_, w| w.usr_addr_bitlen().variant((address.width() - 1) as u8));
 
             let addr = address.value() << (32 - address.width());
-            reg_block.addr.write(|w| w.usr_addr_value().variant(addr));
+            reg_block.addr().write(|w| w.usr_addr_value().variant(addr));
         }
 
         #[cfg(esp32)]
         if !address.is_none() {
-            reg_block.user1.modify(|r, w| unsafe {
+            reg_block.user1().modify(|r, w| unsafe {
                 w.bits(r.bits() & !(0x3f << 26) | (((address.width() - 1) as u32) & 0x3f) << 26)
             });
 
             let addr = address.value() << (32 - address.width());
-            reg_block.addr.write(|w| unsafe { w.bits(addr) });
+            reg_block.addr().write(|w| unsafe { w.bits(addr) });
         }
 
         if dummy > 0 {
             reg_block
-                .user1
+                .user1()
                 .modify(|_, w| w.usr_dummy_cyclelen().variant(dummy - 1));
         }
 
@@ -2857,7 +2800,7 @@ pub trait Instance {
         // set cmd, address, dummy cycles
         let reg_block = self.register_block();
         if !cmd.is_none() {
-            reg_block.user2.modify(|_, w| {
+            reg_block.user2().modify(|_, w| {
                 w.usr_command_bitlen()
                     .variant((cmd.width() - 1) as u8)
                     .usr_command_value()
@@ -2868,35 +2811,33 @@ pub trait Instance {
         #[cfg(not(esp32))]
         if !address.is_none() {
             reg_block
-                .user1
+                .user1()
                 .modify(|_, w| w.usr_addr_bitlen().variant((address.width() - 1) as u8));
 
             let addr = address.value() << (32 - address.width());
-            reg_block.addr.write(|w| w.usr_addr_value().variant(addr));
+            reg_block.addr().write(|w| w.usr_addr_value().variant(addr));
         }
 
         #[cfg(esp32)]
         if !address.is_none() {
-            reg_block.user1.modify(|r, w| unsafe {
+            reg_block.user1().modify(|r, w| unsafe {
                 w.bits(r.bits() & !(0x3f << 26) | (((address.width() - 1) as u32) & 0x3f) << 26)
             });
 
             let addr = address.value() << (32 - address.width());
-            reg_block.addr.write(|w| unsafe { w.bits(addr) });
+            reg_block.addr().write(|w| unsafe { w.bits(addr) });
         }
 
         if dummy > 0 {
             reg_block
-                .user1
+                .user1()
                 .modify(|_, w| w.usr_dummy_cyclelen().variant(dummy - 1));
         }
 
         self.configure_datalen(buffer.len() as u32 * 8);
         self.update();
-        reg_block.cmd.modify(|_, w| w.usr().set_bit());
-        while reg_block.cmd.read().usr().bit_is_set() {
-            // wait for completion
-        }
+        reg_block.cmd().modify(|_, w| w.usr().set_bit());
+        self.flush()?;
         self.read_bytes_from_fifo(buffer)
     }
 
@@ -2904,9 +2845,9 @@ pub trait Instance {
     fn update(&self) {
         let reg_block = self.register_block();
 
-        reg_block.cmd.modify(|_, w| w.update().set_bit());
+        reg_block.cmd().modify(|_, w| w.update().set_bit());
 
-        while reg_block.cmd.read().update().bit_is_set() {
+        while reg_block.cmd().read().update().bit_is_set() {
             // wait
         }
     }
@@ -2922,17 +2863,17 @@ pub trait Instance {
 
         #[cfg(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3))]
         reg_block
-            .ms_dlen
+            .ms_dlen()
             .write(|w| unsafe { w.ms_data_bitlen().bits(len) });
 
         #[cfg(not(any(esp32c2, esp32c3, esp32c6, esp32h2, esp32s3)))]
         {
             reg_block
-                .mosi_dlen
+                .mosi_dlen()
                 .write(|w| unsafe { w.usr_mosi_dbitlen().bits(len) });
 
             reg_block
-                .miso_dlen
+                .miso_dlen()
                 .write(|w| unsafe { w.usr_miso_dbitlen().bits(len) });
         }
     }

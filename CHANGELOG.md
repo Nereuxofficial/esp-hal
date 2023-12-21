@@ -7,18 +7,85 @@ Please note that only changes to the `esp-hal-common` package are tracked in thi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+[Unreleased]
 
 ### Added
+
+- ESP32-C6: Properly initialize PMU (#974)
+- Implement overriding base mac address (#1044)
 
 ### Changed
 
 ### Fixed
 
+### Removed
+
+## [0.14.1] - 2023-12-13
+
+### Fixed
+
+- Fix SHA for all targets (#1021)
+- Fix double &mut for the `SetDutyCycle` impl on `PwmPin` (#1033)
+
+## [0.14.0] - 2023-12-12
+
+### Added
+
+- ESP32-C6: LP core clock is configurable (#907)
+- Derive `Clone` and `Copy` for `EspTwaiFrame` (#914)
+- A way to configure inverted pins (#912)
+- Added API to check a GPIO-pin's interrupt status bit (#929)
+- A `embedded_io_async::Read` implementation for `UsbSerialJtag` (#889)
+- `RtcClock::get_xtal_freq`, `RtcClock::get_slow_freq` (#957)
+- Added Rx Timeout functionality to async Uart (#911)
+- RISC-V: Thread-mode and interrupt-mode executors, `#[main]` macro (#947)
+- A macro to make it easier to create DMA buffers and descriptors (#935)
+- I2C timeout is configurable (#1011)
+- ESP32-C6/ESP32-H2: `flip-link` feature gives zero-cost stack overflow protection (#1008)
+
+### Changed
+
+- Improve DMA documentation & clean up module (#915)
+- Only allow a single version of `esp-hal-common` to be present in an application (#934)
+- ESP32-C3/C6 and ESP32-H2 can now use the `zero-rtc-bss` feature to enable `esp-hal-common/rv-zero-rtc-bss` (#867)
+- Reuse `ieee802154_clock_enable/disable()` functions for BLE and rename `ble_ieee802154_clock_enable()` (#953)
+- The `embedded-io` trait implementations are now gated behind the `embedded-io` feature (#964)
+- Simplifed RMT channels and channel creators (#958)
+- Reworked construction of I2S driver instances (#983)
+- ESP32-S2/S3: Don't require GPIO 18 to create a USB peripheral driver instance (#990)
+- Updated to latest release candidate (`1.0.0-rc.2`) for `embedded-hal{-async,-nb}` (#994)
+- Explicit panic when hitting the `DefaultHandler` (#1005)
+- Relevant interrupts are now auto enabled in `embassy::init` (#1014).
+- Set up interrupts for the DMA and async enabled peripherals only when `async` feature is provided (#1042)
+
+### Fixed
+
 - ESP32-C2/C3 examples: fix build error (#899)
 - ESP32-S3: Fix GPIO interrupt handler crashing when using GPIO48. (#898)
+- Fixed short wait times in embassy causing hangs (#906)
+- Make sure to clear LP/RTC RAM before loading code (#916)
+- Async RMT channels can be used concurrently (#925)
+- Xtensa: Allow using `embassy-executor`'s thread-mode executor if neither `embassy-executor-thread`, nor `embassy-executor-interrupt` is enabled. (#937)
+- Uart Async: Improve interrupt handling and irq <--> future communication (#977)
+- RISC-V: Fix stack allocation (#988)
+- ESP32-C6: Fix used RAM (#997)
+- ESP32-H2: Fix used RAM (#1003)
+- Fix SPI slave DMA dma\_read and dma\_write (#1013)
+- ESP32-C6/H2: Fix disabling of interrupts (#1040)
 
 ### Removed
+
+- Direct boot support has been removed (#903).
+- Removed the `mcu-boot` feature from `esp32c3-hal` (#938)
+- Removed SpiBusController and SpiBusDevice in favour of embedded-hal-bus and embassy-embedded-hal implementataions. (#978)
+
+### Breaking
+
+- `Spi::new`/`Spi::new_half_duplex` takes no gpio pin now, instead you need to call `with_pins` to setup those (#901).
+- ESP32-C2, ESP32-C3, ESP32-S2: atomic emulation trap has been removed. (#904) (#985)
+    - When upgrading you must either remove [these lines](https://github.com/esp-rs/riscv-atomic-emulation-trap#usage) from your `.cargo/config.toml`.
+    - Usage of `core::sync::atomic::*` in dependent crates should be replaced with [portable-atomic](https://github.com/taiki-e/portable-atomic).
+- RSA driver now takes `u32` words instead of `u8` bytes. The expected slice length is now 4 times shorter. (#981)
 
 ## [0.13.1] - 2023-11-02
 
@@ -31,6 +98,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Implement SetFrequencyCycle and PwmPin from embedded_hal for PwmPin of MCPWM. (#880)
 - Added `embassy-time-systick` to ESP32-S2 (#827)
 - Implement enabling/disabling BLE clock on ESP32-C6 (#784)
 - Async support for RMT (#787)
@@ -50,6 +118,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Add a `defmt` feature to the `esp-hal-smartled` package (#846)
 - Support 16MB octal PS-RAM for ESP32-S3 (#858)
 - RISCV TRACE Encoder driver for ESP32-C6 / ESP32-H2 (#864)
+- `embedded_hal` 1 `InputPin` and `embedded_hal_async` `Wait` impls for open drain outputs (#905)
 
 ### Changed
 
@@ -67,6 +136,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed async uart serial, and updated the embassy_serial examples (#871).
 - Fix ESP32-S3 direct-boot (#873)
 - Fix ESP32-C6 ADC (#876)
+- Fix ADC Calibration not being used on ESP32-S2 and ESP32-S3 (#1000)
 
 ### Removed
 
@@ -293,7 +363,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.1.0] - 2022-08-05
 
-[Unreleased]: https://github.com/esp-rs/esp-hal/compare/v0.13.1...HEAD
+[Unreleased]: https://github.com/esp-rs/esp-hal/compare/v0.14.1...HEAD
+[0.14.1]: https://github.com/esp-rs/esp-hal/compare/v0.14.0...v0.14.1
+[0.14.0]: https://github.com/esp-rs/esp-hal/compare/v0.13.1...v0.14.0
 [0.13.1]: https://github.com/esp-rs/esp-hal/compare/v0.13.0...v0.13.1
 [0.13.0]: https://github.com/esp-rs/esp-hal/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/esp-rs/esp-hal/compare/v0.11.0...v0.12.0

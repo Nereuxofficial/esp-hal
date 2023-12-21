@@ -26,10 +26,15 @@ macro_rules! assert_unique_features {
 
 // Given some features, assert that AT LEAST one of the features is enabled.
 macro_rules! assert_used_features {
-    ( $($all:tt),* ) => {
+    ( $all:tt ) => {
+        #[cfg(not(feature = $all))]
+        compile_error!(concat!("The feature flag must be provided: ", $all));
+    };
+
+    ( $($all:tt),+ ) => {
         #[cfg(not(any($(feature = $all),*)))]
         compile_error!(concat!("One of the feature flags must be provided: ", $($all, ", "),*));
-    }
+    };
 }
 
 // Given some features, assert that EXACTLY one of the features is enabled.
@@ -113,7 +118,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     // is available:
     #[cfg(feature = "embassy")]
     {
+        #[cfg(feature = "esp32")]
+        assert_unique_used_features!("embassy-time-timg0");
+
+        #[cfg(not(feature = "esp32"))]
         assert_unique_used_features!("embassy-time-systick", "embassy-time-timg0");
+    }
+
+    #[cfg(feature = "flip-link")]
+    {
+        #[cfg(not(any(feature = "esp32c6", feature = "esp32h2")))]
+        panic!("flip-link is only available on ESP32-C6/ESP32-H2");
     }
 
     // NOTE: update when adding new device support!
@@ -136,6 +151,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         unreachable!() // We've confirmed exactly one known device was selected
     };
 
+    if detect_atomic_extension("a") || detect_atomic_extension("s32c1i") {
+        panic!(
+            "Atomic emulation flags detected in `.cargo/config.toml`, this is no longer supported!"
+        );
+    }
+
     // Load the configuration file for the configured device:
     let chip_toml_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("devices")
@@ -145,7 +166,7 @@ fn main() -> Result<(), Box<dyn Error>> {
 
     let config = fs::read_to_string(chip_toml_path)?;
     let config: Config = basic_toml::from_str(&config)?;
-    let device = config.device;
+    let device = &config.device;
 
     // Check PSRAM features are only given if the target supports PSRAM:
     if !&device.symbols.contains(&String::from("psram"))
@@ -167,18 +188,38 @@ fn main() -> Result<(), Box<dyn Error>> {
         println!("cargo:rustc-cfg={symbol}");
     }
 
+    let mut config_symbols = Vec::new();
+    let arch = device.arch.to_string();
+    let cores = device.cores.to_string();
+    config_symbols.push(device_name);
+    config_symbols.push(&arch);
+    config_symbols.push(&cores);
+
+    for peripheral in &device.peripherals {
+        config_symbols.push(peripheral);
+    }
+
+    for symbol in &device.symbols {
+        config_symbols.push(symbol);
+    }
+
+    #[cfg(feature = "flip-link")]
+    config_symbols.push("flip-link");
+
     // Place all linker scripts in `OUT_DIR`, and instruct Cargo how to find these
     // files:
     let out = PathBuf::from(env::var_os("OUT_DIR").unwrap());
     println!("cargo:rustc-link-search={}", out.display());
 
     if cfg!(feature = "esp32") || cfg!(feature = "esp32s2") || cfg!(feature = "esp32s3") {
-        fs::copy("ld/xtensa/hal-defaults.x", out.join("hal-defaults.x")).unwrap();
+        fs::copy("ld/xtensa/hal-defaults.x", out.join("hal-defaults.x"))?;
+
         let (irtc, drtc) = if cfg!(feature = "esp32s3") {
             ("rtc_fast_seg", "rtc_fast_seg")
         } else {
             ("rtc_fast_iram_seg", "rtc_fast_dram_seg")
         };
+
         let alias = format!(
             r#"
             REGION_ALIAS("ROTEXT", irom_seg);
@@ -190,14 +231,20 @@ fn main() -> Result<(), Box<dyn Error>> {
         "#,
             irtc, drtc
         );
-        fs::write(out.join("alias.x"), alias).unwrap();
+
+        fs::write(out.join("alias.x"), alias)?;
     } else {
-        fs::copy("ld/riscv/hal-defaults.x", out.join("hal-defaults.x"))?;
-        fs::copy("ld/riscv/asserts.x", out.join("asserts.x"))?;
-        fs::copy("ld/riscv/debug.x", out.join("debug.x"))?;
+        preprocess_file(
+            &config_symbols,
+            "ld/riscv/hal-defaults.x",
+            out.join("hal-defaults.x"),
+        )?;
+        preprocess_file(&config_symbols, "ld/riscv/asserts.x", out.join("asserts.x"))?;
+        preprocess_file(&config_symbols, "ld/riscv/debug.x", out.join("debug.x"))?;
     }
 
-    copy_dir_all("ld/sections", &out)?;
+    copy_dir_all(&config_symbols, "ld/sections", &out)?;
+    copy_dir_all(&config_symbols, format!("ld/{device_name}"), &out)?;
 
     // Generate the eFuse table from the selected device's CSV file:
     gen_efuse_table(device_name, out)?;
@@ -205,15 +252,68 @@ fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn copy_dir_all(src: impl AsRef<Path>, dst: impl AsRef<Path>) -> std::io::Result<()> {
+fn copy_dir_all(
+    config_symbols: &Vec<&str>,
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+) -> std::io::Result<()> {
     fs::create_dir_all(&dst)?;
     for entry in fs::read_dir(src)? {
         let entry = entry?;
         let ty = entry.file_type()?;
         if ty.is_dir() {
-            copy_dir_all(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            copy_dir_all(
+                config_symbols,
+                entry.path(),
+                dst.as_ref().join(entry.file_name()),
+            )?;
         } else {
-            fs::copy(entry.path(), dst.as_ref().join(entry.file_name()))?;
+            preprocess_file(
+                config_symbols,
+                entry.path(),
+                dst.as_ref().join(entry.file_name()),
+            )?;
+        }
+    }
+    Ok(())
+}
+
+/// A naive pre-processor for linker scripts
+fn preprocess_file(
+    config: &Vec<&str>,
+    src: impl AsRef<Path>,
+    dst: impl AsRef<Path>,
+) -> std::io::Result<()> {
+    let file = File::open(src)?;
+    let mut out_file = File::create(dst)?;
+
+    let mut take = Vec::new();
+    take.push(true);
+
+    for line in std::io::BufReader::new(file).lines() {
+        let line = line?;
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("#IF ") {
+            let condition = &trimmed[4..];
+            let should_take = take.iter().all(|v| *v == true);
+            let should_take = should_take && config.contains(&condition);
+            take.push(should_take);
+            continue;
+        } else if trimmed == "#ELSE" {
+            let taken = take.pop().unwrap();
+            let should_take = take.iter().all(|v| *v == true);
+            let should_take = should_take && !taken;
+            take.push(should_take);
+            continue;
+        } else if trimmed == "#ENDIF" {
+            take.pop();
+            continue;
+        }
+
+        if *take.last().unwrap() {
+            out_file.write(line.as_bytes())?;
+            out_file.write(b"\n")?;
         }
     }
     Ok(())
@@ -282,4 +382,34 @@ fn gen_efuse_table(device_name: &str, out_dir: impl AsRef<Path>) -> Result<(), B
     }
 
     Ok(())
+}
+
+fn detect_atomic_extension(ext: &str) -> bool {
+    let rustflags = env::var_os("CARGO_ENCODED_RUSTFLAGS")
+        .unwrap()
+        .into_string()
+        .unwrap();
+
+    // Users can pass -Ctarget-feature to the compiler multiple times, so we have to
+    // handle that
+    let target_flags = rustflags
+        .split(0x1f as char)
+        .filter(|s| s.starts_with("target-feature="))
+        .map(|s| s.strip_prefix("target-feature="))
+        .flatten();
+    for tf in target_flags {
+        let tf = tf
+            .split(",")
+            .map(|s| s.trim())
+            .filter(|s| s.starts_with('+'))
+            .map(|s| s.strip_prefix('+'))
+            .flatten();
+        for tf in tf {
+            if tf == ext {
+                return true;
+            }
+        }
+    }
+
+    false
 }

@@ -26,7 +26,7 @@
 #![cfg_attr(xtensa, feature(asm_experimental_arch))]
 #![cfg_attr(
     feature = "async",
-    allow(incomplete_features),
+    allow(incomplete_features, stable_features, unknown_lints, async_fn_in_trait),
     feature(async_fn_in_trait),
     feature(impl_trait_projections)
 )]
@@ -161,22 +161,32 @@ pub mod trapframe {
 // be directly exposed.
 mod soc;
 
+#[cfg(xtensa)]
 #[no_mangle]
 extern "C" fn EspDefaultHandler(_level: u32, _interrupt: peripherals::Interrupt) {
-    #[cfg(feature = "log")]
-    warn!("Unhandled level {} interrupt: {:?}", _level, _interrupt);
+    #[cfg(not(feature = "defmt"))]
+    panic!("Unhandled level {} interrupt: {:?}", _level, _interrupt);
 
     #[cfg(feature = "defmt")]
-    warn!(
+    panic!(
         "Unhandled level {} interrupt: {:?}",
         _level,
         defmt::Debug2Format(&_interrupt)
     );
 }
 
-#[cfg(xtensa)]
+#[cfg(riscv)]
 #[no_mangle]
-extern "C" fn DefaultHandler() {}
+extern "C" fn EspDefaultHandler(_interrupt: peripherals::Interrupt) {
+    #[cfg(not(feature = "defmt"))]
+    panic!("Unhandled interrupt: {:?}", _interrupt);
+
+    #[cfg(feature = "defmt")]
+    panic!(
+        "Unhandled interrupt: {:?}",
+        defmt::Debug2Format(&_interrupt)
+    );
+}
 
 /// Available CPU cores
 ///
@@ -317,7 +327,7 @@ mod critical_section_impl {
 
     #[cfg(multi_core)]
     mod multicore {
-        use core::sync::atomic::{AtomicUsize, Ordering};
+        use portable_atomic::{AtomicUsize, Ordering};
 
         // We're using a value that we know get_raw_core() will never return. This
         // avoids an unnecessary increment of the core ID.
